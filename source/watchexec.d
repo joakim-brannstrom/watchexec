@@ -78,10 +78,9 @@ int cli(AppConfig conf) {
                 write("\033c");
             }
 
-            auto p = pipeProcess(cmd).sandbox.timeout(conf.global.timeout).rcKill;
-            foreach (l; p.process.drainByLineCopy().filter!"!a.empty") {
-                writeln(l);
-            }
+            // use timeout too when upgrading to proc v1.0.7
+            //auto p = spawnProcess(cmd).sandbox.timeout(conf.global.timeout).rcKill;
+            auto p = spawnProcess(cmd).sandbox.rcKill;
             logger.info("exit status: ", p.wait);
         }
 
@@ -234,6 +233,15 @@ struct Monitor {
 
     /// Clear the event listener of any residual events.
     void clear() {
+        foreach (e; fw.getEvents(timeout)) {
+            e.match!((Event.Access x) {}, (Event.Attribute x) {}, (Event.CloseWrite x) {
+            }, (Event.CloseNoWrite x) {}, (Event.Create x) {
+                // add any new files/directories to be listened on
+                fw.watchRecurse!(a => isInteresting(fileExt, a))(x.path);
+            }, (Event.Modify x) {}, (Event.MoveSelf x) {}, (Event.Delete x) {}, (Event.DeleteSelf x) {
+            }, (Event.Rename x) {}, (Event.Open x) {},);
+        }
+
         fw.getEvents;
     }
 }
