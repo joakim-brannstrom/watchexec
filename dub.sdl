@@ -7,7 +7,7 @@ license "BSL-1.0"
 dependency "colorlog" version="~>0.0.2"
 dependency "sumtype" version="~>0.9.4"
 dependency "proc" version="~>1.0.6"
-dependency "my" version="~>0.0.9"
+dependency "my" version="~>0.0.10"
 
 targetPath "build"
 

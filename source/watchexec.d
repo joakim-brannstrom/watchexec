@@ -57,15 +57,22 @@ int cli(AppConfig conf) {
         return conf.global.command;
     }();
 
-    auto monitor = Monitor(conf.global.paths, 52.dur!"weeks", conf.global.monitorExtensions);
+    auto monitor = Monitor(conf.global.paths, conf.global.monitorExtensions);
+
+    AbsolutePath[] eventFiles;
 
     while (true) {
-        auto events = monitor.wait;
-        foreach (changed; events) {
+        if (eventFiles.empty) {
+            eventFiles = monitor.wait(1000.dur!"weeks");
+        }
+
+        foreach (changed; eventFiles) {
             logger.tracef("%s changed", changed);
         }
 
-        if (!events.empty) {
+        if (!eventFiles.empty) {
+            eventFiles = null;
+
             if (conf.global.debounce != Duration.zero) {
                 Thread.sleep(conf.global.debounce);
             }
@@ -76,11 +83,31 @@ int cli(AppConfig conf) {
 
             // use timeout too when upgrading to proc v1.0.7
             //auto p = spawnProcess(cmd).sandbox.timeout(conf.global.timeout).rcKill;
-            auto p = spawnProcess(cmd).sandbox.rcKill;
-            logger.info("exit status: ", p.wait);
-        }
 
-        monitor.clear;
+            try {
+                auto p = spawnProcess(cmd).sandbox.rcKill;
+
+                if (conf.global.restart) {
+                    while (!p.tryWait && eventFiles.empty) {
+                        eventFiles = monitor.wait(10.dur!"msecs");
+                    }
+
+                    if (!eventFiles.empty) {
+                        p.kill;
+                        p.wait;
+                    }
+                } else {
+                    p.wait;
+                }
+                monitor.clear;
+
+                logger.info("exit status: ", p.status);
+            } catch (Exception e) {
+                logger.error(e.msg);
+                return 1;
+            }
+
+        }
     }
 }
 
@@ -99,6 +126,7 @@ struct AppConfig {
         Duration debounce;
         bool clearScreen;
         string[] monitorExtensions;
+        bool restart;
 
         this(this) {
         }
@@ -137,6 +165,7 @@ AppConfig parseUserArgs(string[] args) {
             "c|clear", "clear screen before executing command",&conf.global.clearScreen,
             "d|debounce", format!"set the timeout between detected change and command execution (default: %sms)"(debounce), &debounce,
             "e|ext", "file extensions, including dot, to watch (default: any)", &conf.global.monitorExtensions,
+            "r|restart", "restart the process if it's still running", &conf.global.restart,
             "shell", "run the command in a shell (/bin/sh)", &conf.global.useShell,
             "t|timeout", format!"max runtime of the command (default: %ss)"(timeout), &timeout,
             "v|verbose", format("Set the verbosity (%-(%s, %))", [EnumMembers!(VerboseMode)]), &conf.global.verbosity,
@@ -172,7 +201,6 @@ struct Monitor {
     import my.fswatch;
     import sumtype;
 
-    Duration timeout;
     string[] fileExt;
     FileWatch fw;
 
@@ -181,8 +209,7 @@ struct Monitor {
      *  roots = directories to recursively monitor
      *  fileExt = extensions to watch, if null then all. The extension shall include the dot.
      */
-    this(AbsolutePath[] roots, Duration timeout, string[] fileExt) {
-        this.timeout = timeout;
+    this(AbsolutePath[] roots, string[] fileExt) {
         this.fileExt = fileExt;
 
         fw = fileWatch();
@@ -205,31 +232,34 @@ struct Monitor {
         return canFind(fileExt, p.extension);
     }
 
-    AbsolutePath[] wait() {
-        auto rval = appender!(AbsolutePath[])();
+    AbsolutePath[] wait(Duration timeout) {
+        import my.set;
+
+        Set!AbsolutePath rval;
         try {
             foreach (e; fw.getEvents(timeout)) {
                 e.match!((Event.Access x) {}, (Event.Attribute x) {}, (Event.CloseWrite x) {
-                    rval.put(x.path);
+                    rval.add(x.path);
                 }, (Event.CloseNoWrite x) {}, (Event.Create x) {
-                    rval.put(x.path);
+                    rval.add(x.path);
                     fw.watchRecurse!(a => isInteresting(fileExt, a))(x.path);
-                }, (Event.Modify x) { rval.put(x.path); }, (Event.MoveSelf x) {}, (Event.Delete x) {
-                    rval.put(x.path);
-                }, (Event.DeleteSelf x) { rval.put(x.path); }, (Event.Rename x) {
-                    rval.put(x.to);
+                }, (Event.Modify x) { rval.add(x.path); }, (Event.MoveSelf x) {}, (Event.Delete x) {
+                    rval.add(x.path);
+                }, (Event.DeleteSelf x) { rval.add(x.path); }, (Event.Rename x) {
+                    rval.add(x.to);
                 }, (Event.Open x) {},);
             }
         } catch (UTFException e) {
             logger.warning(e.msg);
+            logger.info("Maybe it works if you use the flag --shell?");
         }
 
-        return rval.data;
+        return rval.toArray;
     }
 
     /// Clear the event listener of any residual events.
     void clear() {
-        foreach (e; fw.getEvents(timeout)) {
+        foreach (e; fw.getEvents(Duration.zero)) {
             e.match!((Event.Access x) {}, (Event.Attribute x) {}, (Event.CloseWrite x) {
             }, (Event.CloseNoWrite x) {}, (Event.Create x) {
                 // add any new files/directories to be listened on
