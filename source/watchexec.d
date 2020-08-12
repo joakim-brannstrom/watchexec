@@ -1,11 +1,8 @@
-#!/usr/bin/env dub
-/+ dub.sdl:
-    name "watchexec"
-    dependency "colorlog" version="~>0.0.2"
-    dependency "sumtype" version="~>0.9.4"
-    dependency "proc" version="~>1.0.6"
-    dependency "my" version="~>0.0.9"
-+/
+/**
+Copyright: Copyright (c) 2020, Joakim Brännström. All rights reserved.
+License: $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost Software License 1.0)
+Author: Joakim Brännström (joakim.brannstrom@gmx.com)
+*/
 module watchexec;
 
 import core.thread : Thread;
@@ -63,13 +60,12 @@ int cli(AppConfig conf) {
     auto monitor = Monitor(conf.global.paths, 52.dur!"weeks", conf.global.monitorExtensions);
 
     while (true) {
-        bool isChanged;
-        foreach (changed; monitor.wait) {
+        auto events = monitor.wait;
+        foreach (changed; events) {
             logger.tracef("%s changed", changed);
-            isChanged = true;
         }
 
-        if (isChanged) {
+        if (!events.empty) {
             if (conf.global.debounce != Duration.zero) {
                 Thread.sleep(conf.global.debounce);
             }
@@ -135,14 +131,14 @@ AppConfig parseUserArgs(string[] args) {
 
         string[] paths;
         uint timeout = 600;
-        uint debounce = 500;
+        uint debounce = 200;
         // dfmt off
         conf.global.helpInfo = std.getopt.getopt(args,
             "c|clear", "clear screen before executing command",&conf.global.clearScreen,
-            "d|debounce", "set the timeout between detected change and command execution (default: 500ms)", &debounce,
+            "d|debounce", format!"set the timeout between detected change and command execution (default: %sms)"(debounce), &debounce,
             "e|ext", "file extensions, including dot, to watch (default: any)", &conf.global.monitorExtensions,
             "shell", "run the command in a shell (/bin/sh)", &conf.global.useShell,
-            "t|timeout", "max runtime of the command (default: 600s)", &timeout,
+            "t|timeout", format!"max runtime of the command (default: %ss)"(timeout), &timeout,
             "v|verbose", format("Set the verbosity (%-(%s, %))", [EnumMembers!(VerboseMode)]), &conf.global.verbosity,
             "w|watch", "watch a specific directory", &paths,
             );
