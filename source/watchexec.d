@@ -81,11 +81,8 @@ int cli(AppConfig conf) {
                 write("\033c");
             }
 
-            // use timeout too when upgrading to proc v1.0.7
-            //auto p = spawnProcess(cmd).sandbox.timeout(conf.global.timeout).rcKill;
-
             try {
-                auto p = spawnProcess(cmd).sandbox.rcKill;
+                auto p = spawnProcess(cmd).sandbox.timeout(conf.global.timeout).rcKill;
 
                 if (conf.global.restart) {
                     while (!p.tryWait && eventFiles.empty) {
