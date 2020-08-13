@@ -128,15 +128,16 @@ struct AppConfig {
         std.getopt.GetoptResult helpInfo;
         VerboseMode verbosity;
         bool help = true;
+
+        AbsolutePath[] paths;
+        Duration debounce;
+        Duration timeout;
+        bool clearScreen;
+        bool restart;
+        bool useShell;
         string progName;
         string[] command;
-        AbsolutePath[] paths;
-        Duration timeout;
-        bool useShell;
-        Duration debounce;
-        bool clearScreen;
         string[] monitorExtensions;
-        bool restart;
 
         this(this) {
         }
@@ -168,7 +169,7 @@ AppConfig parseUserArgs(string[] args) {
         }
 
         string[] paths;
-        uint timeout = 600;
+        uint timeout = 3600;
         uint debounce = 200;
         // dfmt off
         conf.global.helpInfo = std.getopt.getopt(args,
@@ -240,7 +241,7 @@ struct Monitor {
             if (isDir(p)) {
                 return true;
             }
-        } catch(Exception e) {
+        } catch (Exception e) {
             // p was removed or do not exist
             return false;
         }
