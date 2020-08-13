@@ -15,6 +15,7 @@ import std.datetime : dur, Clock;
 import std.format : format;
 
 import colorlog;
+import my.filter;
 import my.path;
 
 int main(string[] args) {
@@ -58,7 +59,8 @@ int cli(AppConfig conf) {
         return conf.global.command;
     }();
 
-    auto monitor = Monitor(conf.global.paths, conf.global.monitorExtensions);
+    auto monitor = Monitor(conf.global.paths, conf.global.monitorExtensions,
+            ReFilter(conf.global.include, conf.global.exclude));
 
     AbsolutePath[] eventFiles;
 
@@ -152,6 +154,9 @@ struct AppConfig {
         string[] command;
         string[] monitorExtensions;
 
+        string include = ".*";
+        string[] exclude;
+
         this(this) {
         }
     }
@@ -191,6 +196,8 @@ AppConfig parseUserArgs(string[] args) {
             "d|debounce", format!"set the timeout between detected change and command execution (default: %sms)"(debounce), &debounce,
             "env", "set WATCHEXEC_*_PATH environment variables when executing the command", &conf.global.setEnv,
             "e|ext", "file extensions, including dot, to watch (default: any)", &conf.global.monitorExtensions,
+            "re-exclude", "ignore modifications to paths matching the pattern (regex: .*)", &conf.global.exclude,
+            "re-include", "ignore all modifications except those matching the pattern (regex: <empty>)", &conf.global.include,
             "r|restart", "restart the process if it's still running", &conf.global.restart,
             "shell", "run the command in a shell (/bin/sh)", &conf.global.useShell,
             "t|timeout", format!"max runtime of the command (default: %ss)"(timeout), &timeout,
@@ -229,14 +236,16 @@ struct Monitor {
 
     string[] fileExt;
     FileWatch fw;
+    ReFilter fileFilter;
 
     /**
      * Params:
      *  roots = directories to recursively monitor
      *  fileExt = extensions to watch, if null then all. The extension shall include the dot.
      */
-    this(AbsolutePath[] roots, string[] fileExt) {
+    this(AbsolutePath[] roots, string[] fileExt, ReFilter fileFilter) {
         this.fileExt = fileExt;
+        this.fileFilter = fileFilter;
 
         fw = fileWatch();
         foreach (r; roots) {
@@ -285,7 +294,10 @@ struct Monitor {
             logger.info("Maybe it works if you use the flag --shell?");
         }
 
-        return rval.toRange.filter!(a => isInteresting(fileExt, a)).array;
+        return rval.toRange
+            .filter!(a => isInteresting(fileExt, a))
+            .filter!(a => fileFilter.match(a))
+            .array;
     }
 
     /// Clear the event listener of any residual events.
