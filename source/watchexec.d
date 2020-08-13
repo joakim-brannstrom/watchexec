@@ -146,7 +146,8 @@ struct AppConfig {
     Global global;
 
     void printHelp() {
-        std.getopt.defaultGetoptPrinter(format("usage: %s <options> -- <command>\n",
+        std.getopt.defaultGetoptPrinter(format(
+                "Execute commands when watched files change\nusage: %s [options] -- <command>\n\noptions:",
                 global.progName), global.helpInfo.options);
     }
 }
