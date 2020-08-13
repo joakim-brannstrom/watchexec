@@ -7,8 +7,9 @@ module watchexec;
 
 import core.thread : Thread;
 import logger = std.experimental.logger;
-import std.algorithm : filter;
+import std.algorithm : filter, map, joiner;
 import std.array : array, empty;
+import std.conv : text;
 import std.datetime : Duration;
 import std.datetime : dur, Clock;
 import std.format : format;
@@ -71,6 +72,17 @@ int cli(AppConfig conf) {
         }
 
         if (!eventFiles.empty) {
+            auto env = () {
+                string[string] rval;
+                if (conf.global.setEnv && eventFiles.length == 1) {
+                    rval["WATCHEXEC_CHANGED_PATH"] = eventFiles[0].toString;
+                } else if (conf.global.setEnv) {
+                    rval["WATCHEXEC_MULTI_CHANGED_PATH"] = eventFiles.map!(a => a.toString)
+                        .joiner(":").text;
+                }
+                return rval;
+            }();
+
             eventFiles = null;
 
             if (conf.global.debounce != Duration.zero) {
@@ -82,7 +94,7 @@ int cli(AppConfig conf) {
             }
 
             try {
-                auto p = spawnProcess(cmd).sandbox.timeout(conf.global.timeout).rcKill;
+                auto p = spawnProcess(cmd, env).sandbox.timeout(conf.global.timeout).rcKill;
 
                 if (conf.global.restart) {
                     while (!p.tryWait && eventFiles.empty) {
@@ -134,6 +146,7 @@ struct AppConfig {
         Duration timeout;
         bool clearScreen;
         bool restart;
+        bool setEnv;
         bool useShell;
         string progName;
         string[] command;
@@ -176,6 +189,7 @@ AppConfig parseUserArgs(string[] args) {
         conf.global.helpInfo = std.getopt.getopt(args,
             "c|clear", "clear screen before executing command",&conf.global.clearScreen,
             "d|debounce", format!"set the timeout between detected change and command execution (default: %sms)"(debounce), &debounce,
+            "env", "set WATCHEXEC_*_PATH environment variables when executing the command", &conf.global.setEnv,
             "e|ext", "file extensions, including dot, to watch (default: any)", &conf.global.monitorExtensions,
             "r|restart", "restart the process if it's still running", &conf.global.restart,
             "shell", "run the command in a shell (/bin/sh)", &conf.global.useShell,
