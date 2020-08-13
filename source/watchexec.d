@@ -229,15 +229,20 @@ struct Monitor {
 
     }
 
-    static bool isInteresting(string[] fileExt, string p) {
+    static bool isInteresting(string[] fileExt, string p) nothrow {
         import std.path : extension;
 
         if (fileExt.empty) {
             return true;
         }
 
-        if (isDir(p)) {
-            return true;
+        try {
+            if (isDir(p)) {
+                return true;
+            }
+        } catch(Exception e) {
+            // p was removed or do not exist
+            return false;
         }
         return canFind(fileExt, p.extension);
     }
@@ -264,7 +269,7 @@ struct Monitor {
             logger.info("Maybe it works if you use the flag --shell?");
         }
 
-        return rval.toArray;
+        return rval.toRange.filter!(a => isInteresting(fileExt, a)).array;
     }
 
     /// Clear the event listener of any residual events.
