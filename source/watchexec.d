@@ -89,16 +89,17 @@ int cli(AppConfig conf) {
                         eventFiles = monitor.wait(10.dur!"msecs");
                     }
 
-                    if (!eventFiles.empty) {
+                    if (eventFiles.empty) {
+                        printExitStatus(p.status);
+                    } else {
                         p.kill;
                         p.wait;
                     }
                 } else {
                     p.wait;
+                    printExitStatus(p.status);
                 }
                 monitor.clear;
-
-                logger.info("exit status: ", p.status);
             } catch (Exception e) {
                 logger.error(e.msg);
                 return 1;
@@ -106,6 +107,18 @@ int cli(AppConfig conf) {
 
         }
     }
+}
+
+void printExitStatus(int code) {
+    import std.conv : to;
+
+    auto msg = () {
+        if (code == 0)
+            return "exit status".color(Color.green);
+        return "exit status".color(Color.red);
+    }();
+
+    logger.info(msg, " ", code);
 }
 
 struct AppConfig {
