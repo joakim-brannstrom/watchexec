@@ -24,6 +24,7 @@ int main(string[] args) {
     auto conf = parseUserArgs(args);
 
     confLogger(conf.global.verbosity);
+    logger.trace(conf);
 
     if (conf.global.help)
         return cliHelp(conf);
@@ -149,7 +150,6 @@ struct AppConfig {
         bool watchMetadata;
         string progName;
         string[] command;
-        string[] monitorExtensions;
 
         string include = ".*";
         string[] exclude;
@@ -184,12 +184,13 @@ AppConfig parseUserArgs(string[] args) {
         string[] paths;
         uint timeout = 3600;
         uint debounce = 200;
+        string[] monitorExtensions;
         // dfmt off
         conf.global.helpInfo = std.getopt.getopt(args,
             "c|clear", "clear screen before executing command",&conf.global.clearScreen,
             "d|debounce", format!"set the timeout between detected change and command execution (default: %sms)"(debounce), &debounce,
             "env", "set WATCHEXEC_*_PATH environment variables when executing the command", &conf.global.setEnv,
-            "e|ext", "file extensions, including dot, to watch (default: any)", &conf.global.monitorExtensions,
+            "e|ext", "file extensions, excluding dot, to watch (default: any)", &monitorExtensions,
             "meta", "watch for metadata changes (date, open/close, permission)", &conf.global.watchMetadata,
             "re-exclude", "ignore modifications to paths matching the pattern (regex: .*)", &conf.global.exclude,
             "re-include", "ignore all modifications except those matching the pattern (regex: <empty>)", &conf.global.include,
@@ -201,10 +202,17 @@ AppConfig parseUserArgs(string[] args) {
             );
         // dfmt on
 
-        conf.global.help = conf.global.helpInfo.helpWanted;
+        if (!monitorExtensions.empty && conf.global.include != ".*") {
+            logger.error("-e|--ext and --re-include can't be combined");
+            return conf;
+        }
+
+        conf.global.include = format!`(%-(.*\.%s%))`(monitorExtensions);
         conf.global.timeout = timeout.dur!"seconds";
         conf.global.debounce = debounce.dur!"msecs";
         conf.global.paths = paths.map!(a => AbsolutePath(a)).array;
+
+        conf.global.help = conf.global.helpInfo.helpWanted;
     } catch (std.getopt.GetOptException e) {
         // unknown option
         logger.error(e.msg);
