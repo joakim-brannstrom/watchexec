@@ -247,11 +247,13 @@ struct Monitor {
         this.fileExt = fileExt;
         this.fileFilter = fileFilter;
 
+        auto app = appender!(AbsolutePath[])();
         fw = fileWatch();
         foreach (r; roots) {
-            fw.watchRecurse!(a => isInteresting(fileExt, a))(r);
+            app.put(fw.watchRecurse!(a => isInteresting(fileExt, a))(r));
         }
 
+        logger.trace(!app.data.empty, "unable to watch ", app.data);
     }
 
     static bool isInteresting(string[] fileExt, string p) nothrow {
