@@ -10,12 +10,11 @@ and runs a command when it detects any modifications.
 * support watching only files with specific file extensions
 * optionally clears the screen between executing the command
 * optinally restart the command if it is already executing when a modification is detected
+* optionally watch for metadata changes.
 * sandbox feature which mean that when a process is terminated it also mean that all its children are killed
 * sets the following environment variables in the child process when `--env` is used:
-    * If a single file changed (depending on the event type):
-        * `$WATCHEXEC_CHANGED_PATH`, the path of the file was changed
-    * If multiple files changed:
-        * `$WATCHEXEC_MULTI_CHANGED_PATH`, all filenames separated by ':'
+    * `$WATCHEXEC_EVENT_PATH` is a tuple of values "event type":"path"
+    * If multiple files changed then the events are separated by ";"
 
 ## Usage Examples
 
