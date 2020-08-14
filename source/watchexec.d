@@ -39,6 +39,7 @@ int cliHelp(AppConfig conf) {
 
 int cli(AppConfig conf) {
     import std.stdio : write, writeln;
+    import my.fswatch : ContentEvents, MetadataEvents;
     import proc;
 
     if (conf.global.paths.empty) {
@@ -59,8 +60,7 @@ int cli(AppConfig conf) {
         return conf.global.command;
     }();
 
-    auto monitor = Monitor(conf.global.paths,
-            ReFilter(conf.global.include, conf.global.exclude));
+    auto monitor = Monitor(conf.global.paths, ReFilter(conf.global.include, conf.global.exclude), conf.global.watchMetadata ? (ContentEvents | MetadataEvents) : ContentEvents);
 
     MonitorResult[] eventFiles;
 
@@ -153,9 +153,6 @@ struct AppConfig {
 
         string include = ".*";
         string[] exclude;
-
-        this(this) {
-        }
     }
 
     Global global;
@@ -249,18 +246,20 @@ struct Monitor {
 
     FileWatch fw;
     ReFilter fileFilter;
+    uint events;
 
     /**
      * Params:
      *  roots = directories to recursively monitor
      */
-    this(AbsolutePath[] roots, ReFilter fileFilter) {
+    this(AbsolutePath[] roots, ReFilter fileFilter, uint events = ContentEvents) {
         this.fileFilter = fileFilter;
+        this.events = events;
 
         auto app = appender!(AbsolutePath[])();
         fw = fileWatch();
         foreach (r; roots) {
-            app.put(fw.watchRecurse(r));
+            app.put(fw.watchRecurse(r, events));
         }
 
         logger.trace(!app.data.empty, "unable to watch ", app.data);
@@ -276,7 +275,7 @@ struct Monitor {
 rval.put(MonitorResult(MonitorResult.Kind.CloseWrite, x.path));
                 }, (Event.CloseNoWrite x) { rval.put(MonitorResult(MonitorResult.Kind.CloseNoWrite, x.path)); }, (Event.Create x) {
 rval.put(MonitorResult(MonitorResult.Kind.Create, x.path));
-                    fw.watchRecurse(x.path);
+                    fw.watchRecurse(x.path, events);
                 }, (Event.Modify x) {
 rval.put(MonitorResult(MonitorResult.Kind.Modify, x.path));
                  }, (Event.MoveSelf x) {
@@ -307,7 +306,7 @@ rval.put(MonitorResult(MonitorResult.Kind.Open, x.path));
             e.match!((Event.Access x) {}, (Event.Attribute x) {}, (Event.CloseWrite x) {
             }, (Event.CloseNoWrite x) {}, (Event.Create x) {
                 // add any new files/directories to be listened on
-                fw.watchRecurse(x.path);
+                fw.watchRecurse(x.path, events);
             }, (Event.Modify x) {}, (Event.MoveSelf x) {}, (Event.Delete x) {}, (Event.DeleteSelf x) {
             }, (Event.Rename x) {}, (Event.Open x) {},);
         }
