@@ -61,7 +61,9 @@ int cli(AppConfig conf) {
         return conf.global.command;
     }();
 
-    auto monitor = Monitor(conf.global.paths, ReFilter(conf.global.include, conf.global.exclude), conf.global.watchMetadata ? (ContentEvents | MetadataEvents) : ContentEvents);
+    auto monitor = Monitor(conf.global.paths, ReFilter(conf.global.include,
+            conf.global.exclude), conf.global.watchMetadata
+            ? (ContentEvents | MetadataEvents) : ContentEvents);
 
     MonitorResult[] eventFiles;
 
@@ -78,8 +80,8 @@ int cli(AppConfig conf) {
             string[string] env;
 
             if (conf.global.setEnv) {
-                env["WATCHEXEC_EVENT"] = eventFiles.map!(a => format!"%s:%s"(a.kind, a.path))
-                    .joiner(";").text;
+                env["WATCHEXEC_EVENT"] = eventFiles.map!(a => format!"%s:%s"(a.kind,
+                        a.path)).joiner(";").text;
             }
 
             eventFiles = null;
@@ -225,18 +227,19 @@ AppConfig parseUserArgs(string[] args) {
 
 struct MonitorResult {
     enum Kind {
-        Access ,
-        Attribute ,
-        CloseWrite ,
-        CloseNoWrite ,
-        Create ,
-        Delete ,
-        DeleteSelf ,
-        Modify ,
-        MoveSelf ,
-        Rename ,
-        Open ,
+        Access,
+        Attribute,
+        CloseWrite,
+        CloseNoWrite,
+        Create,
+        Delete,
+        DeleteSelf,
+        Modify,
+        MoveSelf,
+        Rename,
+        Open,
     }
+
     Kind kind;
     AbsolutePath path;
 }
@@ -279,23 +282,29 @@ struct Monitor {
         auto rval = appender!(MonitorResult[])();
         try {
             foreach (e; fw.getEvents(timeout)) {
-                e.match!((Event.Access x) { rval.put(MonitorResult(MonitorResult.Kind.Access, x.path)); }, (Event.Attribute x) { rval.put(MonitorResult(MonitorResult.Kind.Attribute, x.path)); }, (Event.CloseWrite x) {
-rval.put(MonitorResult(MonitorResult.Kind.CloseWrite, x.path));
-                }, (Event.CloseNoWrite x) { rval.put(MonitorResult(MonitorResult.Kind.CloseNoWrite, x.path)); }, (Event.Create x) {
-rval.put(MonitorResult(MonitorResult.Kind.Create, x.path));
+                e.match!((Event.Access x) {
+                    rval.put(MonitorResult(MonitorResult.Kind.Access, x.path));
+                }, (Event.Attribute x) {
+                    rval.put(MonitorResult(MonitorResult.Kind.Attribute, x.path));
+                }, (Event.CloseWrite x) {
+                    rval.put(MonitorResult(MonitorResult.Kind.CloseWrite, x.path));
+                }, (Event.CloseNoWrite x) {
+                    rval.put(MonitorResult(MonitorResult.Kind.CloseNoWrite, x.path));
+                }, (Event.Create x) {
+                    rval.put(MonitorResult(MonitorResult.Kind.Create, x.path));
                     fw.watchRecurse(x.path, events);
                 }, (Event.Modify x) {
-rval.put(MonitorResult(MonitorResult.Kind.Modify, x.path));
-                 }, (Event.MoveSelf x) {
-                 rval.put(MonitorResult(MonitorResult.Kind.MoveSelf, x.path));
-                 }, (Event.Delete x) {
-rval.put(MonitorResult(MonitorResult.Kind.Delete, x.path));
+                    rval.put(MonitorResult(MonitorResult.Kind.Modify, x.path));
+                }, (Event.MoveSelf x) {
+                    rval.put(MonitorResult(MonitorResult.Kind.MoveSelf, x.path));
+                }, (Event.Delete x) {
+                    rval.put(MonitorResult(MonitorResult.Kind.Delete, x.path));
                 }, (Event.DeleteSelf x) {
-rval.put(MonitorResult(MonitorResult.Kind.DeleteSelf, x.path));
+                    rval.put(MonitorResult(MonitorResult.Kind.DeleteSelf, x.path));
                 }, (Event.Rename x) {
-rval.put(MonitorResult(MonitorResult.Kind.Rename, x.to));
+                    rval.put(MonitorResult(MonitorResult.Kind.Rename, x.to));
                 }, (Event.Open x) {
-rval.put(MonitorResult(MonitorResult.Kind.Open, x.path));
+                    rval.put(MonitorResult(MonitorResult.Kind.Open, x.path));
                 },);
             }
         } catch (UTFException e) {
@@ -303,9 +312,7 @@ rval.put(MonitorResult(MonitorResult.Kind.Open, x.path));
             logger.info("Maybe it works if you use the flag --shell?");
         }
 
-        return rval.data
-            .filter!(a => fileFilter.match(a.path))
-            .array;
+        return rval.data.filter!(a => fileFilter.match(a.path)).array;
     }
 
     /// Clear the event listener of any residual events.
