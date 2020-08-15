@@ -255,6 +255,7 @@ struct Monitor {
     import my.fswatch;
     import sumtype;
 
+    AbsolutePath[] roots;
     FileWatch fw;
     ReFilter fileFilter;
     uint events;
@@ -264,6 +265,7 @@ struct Monitor {
      *  roots = directories to recursively monitor
      */
     this(AbsolutePath[] roots, ReFilter fileFilter, uint events = ContentEvents) {
+        this.roots = roots;
         this.fileFilter = fileFilter;
         this.events = events;
 
@@ -277,6 +279,7 @@ struct Monitor {
     }
 
     MonitorResult[] wait(Duration timeout) {
+        import std.algorithm : canFind, startsWith;
         import my.set;
 
         auto rval = appender!(MonitorResult[])();
@@ -297,6 +300,9 @@ struct Monitor {
                     rval.put(MonitorResult(MonitorResult.Kind.Modify, x.path));
                 }, (Event.MoveSelf x) {
                     rval.put(MonitorResult(MonitorResult.Kind.MoveSelf, x.path));
+                    if (canFind!((a, b) => b.toString.startsWith(a.toString) != 0)(roots, x.path)) {
+                        fw.watchRecurse(x.path, events);
+                    }
                 }, (Event.Delete x) {
                     rval.put(MonitorResult(MonitorResult.Kind.Delete, x.path));
                 }, (Event.DeleteSelf x) {
