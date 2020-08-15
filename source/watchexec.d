@@ -53,7 +53,7 @@ int cli(AppConfig conf) {
     }
 
     logger.infof("command to execute on change: %-(%s %)", conf.global.command);
-    logger.infof("watching directories for change: %s", conf.global.paths);
+    logger.infof("watching for change: %s", conf.global.paths);
 
     const cmd = () {
         if (conf.global.useShell)
