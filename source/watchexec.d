@@ -61,7 +61,7 @@ int cli(AppConfig conf) {
         return conf.global.command;
     }();
 
-    auto monitor = Monitor(conf.global.paths, ReFilter(conf.global.include,
+    auto monitor = Monitor(conf.global.paths, GlobFilter(conf.global.include,
             conf.global.exclude), conf.global.watchMetadata
             ? (ContentEvents | MetadataEvents) : ContentEvents);
 
@@ -183,7 +183,7 @@ struct AppConfig {
         string progName;
         string[] command;
 
-        string include = ".*";
+        string[] include;
         string[] exclude;
     }
 
@@ -213,6 +213,7 @@ AppConfig parseUserArgs(string[] args) {
             args = args[0 .. idx];
         }
 
+        string[] include;
         string[] paths;
         uint timeout = 3600;
         uint debounce = 200;
@@ -225,8 +226,8 @@ AppConfig parseUserArgs(string[] args) {
             "e|ext", "file extensions, excluding dot, to watch (default: any)", &monitorExtensions,
             "meta", "watch for metadata changes (date, open/close, permission)", &conf.global.watchMetadata,
             "notify", "use notify-send for desktop notification with commands exit status", &conf.global.useNotifySend,
-            "re-exclude", "ignore modifications to paths matching the pattern (regex: .*)", &conf.global.exclude,
-            "re-include", "ignore all modifications except those matching the pattern (regex: <empty>)", &conf.global.include,
+            "exclude", "ignore modifications to paths matching the pattern (glob: <empty>)", &conf.global.exclude,
+            "include", "ignore all modifications except those matching the pattern (glob: *)", &conf.global.include,
             "r|restart", "restart the process if it's still running", &conf.global.restart,
             "shell", "run the command in a shell (/bin/sh)", &conf.global.useShell,
             "t|timeout", format!"max runtime of the command (default: %ss)"(timeout), &timeout,
@@ -235,12 +236,14 @@ AppConfig parseUserArgs(string[] args) {
             );
         // dfmt on
 
-        if (!monitorExtensions.empty && conf.global.include != ".*") {
-            logger.error("-e|--ext and --re-include can't be combined");
-            return conf;
+        include ~= monitorExtensions.map!(a => format!"*.%s"(a)).array;
+
+        if (include.empty) {
+            conf.global.include = ["*"];
+        } else {
+            conf.global.include = include;
         }
 
-        conf.global.include = format!`(%-(.*\.%s%))`(monitorExtensions);
         conf.global.timeout = timeout.dur!"seconds";
         conf.global.debounce = debounce.dur!"msecs";
         conf.global.paths = paths.map!(a => AbsolutePath(a)).array;
@@ -288,14 +291,14 @@ struct Monitor {
 
     AbsolutePath[] roots;
     FileWatch fw;
-    ReFilter fileFilter;
+    GlobFilter fileFilter;
     uint events;
 
     /**
      * Params:
      *  roots = directories to recursively monitor
      */
-    this(AbsolutePath[] roots, ReFilter fileFilter, uint events = ContentEvents) {
+    this(AbsolutePath[] roots, GlobFilter fileFilter, uint events = ContentEvents) {
         this.roots = roots;
         this.fileFilter = fileFilter;
         this.events = events;
@@ -364,5 +367,48 @@ struct Monitor {
         }
 
         fw.getEvents;
+    }
+}
+
+/** Filter strings by first cutting out a region (include) and then selectively
+ * remove (exclude) from that region.
+ *
+ * I often use this in my programs to allow a user to specify what files to
+ * process and the have some control over what to exclude.
+ */
+struct GlobFilter {
+    string[] include;
+    string[] exclude;
+
+    /**
+     * The regular expressions are set to ignoring the case.
+     *
+     * Params:
+     *  include = glob string patter
+     *  exclude = glob string patterh
+     */
+    this(string[] include, string[] exclude) {
+        this.include = include;
+        this.exclude = exclude;
+    }
+
+    /**
+     * Returns: true if `s` matches `ìncludeRe` and NOT matches any of `excludeRe`.
+     */
+    bool match(string s) {
+        import std.algorithm : canFind;
+        import std.path : globMatch;
+
+        if (!canFind!((a, b) => globMatch(b, a))(include, s)) {
+            debug logger.tracef("%s did not match any of %s", s, include);
+            return false;
+        }
+
+        if (canFind!((a, b) => globMatch(b, a))(exclude, s)) {
+            debug logger.tracef("%s did match one of %s", s, exclude);
+            return false;
+        }
+
+        return true;
     }
 }
