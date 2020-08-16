@@ -33,6 +33,11 @@ int main(string[] args) {
 
 private:
 
+immutable defaultExclude = [
+    "*/.DS_Store", "*.py[co]", "*/#*#", "*/.#*", "*/.*.kate-swp", "*/.*.sw?",
+    "*/.*.sw?x", "*/.git/*"
+];
+
 int cliHelp(AppConfig conf) {
     conf.printHelp;
     return 0;
@@ -213,21 +218,23 @@ AppConfig parseUserArgs(string[] args) {
             args = args[0 .. idx];
         }
 
+        bool noDefaultIgnore;
         string[] include;
-        string[] paths;
-        uint timeout = 3600;
-        uint debounce = 200;
         string[] monitorExtensions;
+        string[] paths;
+        uint debounce = 200;
+        uint timeout = 3600;
         // dfmt off
         conf.global.helpInfo = std.getopt.getopt(args,
             "c|clear", "clear screen before executing command",&conf.global.clearScreen,
             "d|debounce", format!"set the timeout between detected change and command execution (default: %sms)"(debounce), &debounce,
             "env", "set WATCHEXEC_*_PATH environment variables when executing the command", &conf.global.setEnv,
-            "e|ext", "file extensions, excluding dot, to watch (default: any)", &monitorExtensions,
-            "meta", "watch for metadata changes (date, open/close, permission)", &conf.global.watchMetadata,
-            "notify", "use notify-send for desktop notification with commands exit status", &conf.global.useNotifySend,
             "exclude", "ignore modifications to paths matching the pattern (glob: <empty>)", &conf.global.exclude,
+            "e|ext", "file extensions, excluding dot, to watch (default: any)", &monitorExtensions,
             "include", "ignore all modifications except those matching the pattern (glob: *)", &conf.global.include,
+            "meta", "watch for metadata changes (date, open/close, permission)", &conf.global.watchMetadata,
+            "no-default-ignore", "skip auto-ignoring of commonly ignored globs", &noDefaultIgnore,
+            "notify", "use notify-send for desktop notification with commands exit status", &conf.global.useNotifySend,
             "r|restart", "restart the process if it's still running", &conf.global.restart,
             "shell", "run the command in a shell (/bin/sh)", &conf.global.useShell,
             "t|timeout", format!"max runtime of the command (default: %ss)"(timeout), &timeout,
@@ -237,11 +244,14 @@ AppConfig parseUserArgs(string[] args) {
         // dfmt on
 
         include ~= monitorExtensions.map!(a => format!"*.%s"(a)).array;
-
         if (include.empty) {
             conf.global.include = ["*"];
         } else {
             conf.global.include = include;
+        }
+
+        if (!noDefaultIgnore) {
+            conf.global.exclude ~= defaultExclude;
         }
 
         conf.global.timeout = timeout.dur!"seconds";
