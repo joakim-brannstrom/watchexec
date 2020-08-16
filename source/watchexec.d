@@ -18,17 +18,20 @@ import colorlog;
 import my.filter;
 import my.path;
 
-int main(string[] args) {
-    confLogger(VerboseMode.info);
+version (unittest) {
+} else {
+    int main(string[] args) {
+        confLogger(VerboseMode.info);
 
-    auto conf = parseUserArgs(args);
+        auto conf = parseUserArgs(args);
 
-    confLogger(conf.global.verbosity);
-    logger.trace(conf);
+        confLogger(conf.global.verbosity);
+        logger.trace(conf);
 
-    if (conf.global.help)
-        return cliHelp(conf);
-    return cli(conf);
+        if (conf.global.help)
+            return cliHelp(conf);
+        return cli(conf);
+    }
 }
 
 private:
@@ -206,6 +209,7 @@ AppConfig parseUserArgs(string[] args) {
     import std.algorithm : countUntil, map;
     import std.path : baseName;
     import std.traits : EnumMembers;
+    import my.file : existsAnd, isFile;
     static import std.getopt;
 
     AppConfig conf;
@@ -219,6 +223,7 @@ AppConfig parseUserArgs(string[] args) {
         }
 
         bool noDefaultIgnore;
+        bool noVcsIgnore;
         string[] include;
         string[] monitorExtensions;
         string[] paths;
@@ -234,6 +239,7 @@ AppConfig parseUserArgs(string[] args) {
             "include", "ignore all modifications except those matching the pattern (glob: *)", &conf.global.include,
             "meta", "watch for metadata changes (date, open/close, permission)", &conf.global.watchMetadata,
             "no-default-ignore", "skip auto-ignoring of commonly ignored globs", &noDefaultIgnore,
+            "no-vcs-ignore", "skip auto-loading of .gitignore files for filtering", &noVcsIgnore,
             "notify", "use notify-send for desktop notification with commands exit status", &conf.global.useNotifySend,
             "r|restart", "restart the process if it's still running", &conf.global.restart,
             "shell", "run the command in a shell (/bin/sh)", &conf.global.useShell,
@@ -250,7 +256,15 @@ AppConfig parseUserArgs(string[] args) {
             conf.global.include = include;
         }
 
-        if (!noDefaultIgnore) {
+        if (!noVcsIgnore && existsAnd!isFile(Path(".gitignore"))) {
+            import std.file : readText;
+
+            try {
+                conf.global.exclude ~= parseGitIgnore(readText(".gitignore"));
+            } catch (Exception e) {
+                logger.warning(e.msg);
+            }
+        } else if (!noDefaultIgnore) {
             conf.global.exclude ~= defaultExclude;
         }
 
@@ -421,4 +435,59 @@ struct GlobFilter {
 
         return true;
     }
+}
+
+/** Returns: the glob patterns from `content`.
+ *
+ * The syntax is the one found in .gitignore files.
+ */
+string[] parseGitIgnore(string content) {
+    import std.algorithm : splitter;
+    import std.array : appender;
+    import std.ascii : newline;
+    import std.string : strip;
+
+    auto app = appender!(string[])();
+
+    foreach (l; content.splitter(newline).filter!(a => !a.empty)
+            .filter!(a => a[0] != '#')) {
+        app.put(l.strip);
+    }
+
+    return app.data;
+}
+
+@("shall parse a file with gitignore syntax")
+unittest {
+    auto res = parseGitIgnore(`*.[oa]
+*.obj
+*.svn
+
+# editor junk files
+*~
+*.orig
+tags
+*.swp
+
+# dlang
+build/
+.dub
+docs.json
+__dummy.html
+*.lst
+__test__*__
+
+# rust
+target/
+**/*.rs.bk
+
+# python
+*.pyc
+
+repo.tar.gz`);
+    assert(res == [
+            "*.[oa]", "*.obj", "*.svn", "*~", "*.orig", "tags", "*.swp", "build/",
+            ".dub", "docs.json", "__dummy.html", "*.lst", "__test__*__",
+            "target/", "**/*.rs.bk", "*.pyc", "repo.tar.gz"
+            ]);
 }
