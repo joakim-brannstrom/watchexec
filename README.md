@@ -8,6 +8,8 @@ and runs a command when it detects any modifications.
 * simple invocation and use
 * monitors one or more root directories recursively for changes
 * support watching only files with specific file extensions
+* optionally send a desktop notification with the exit code from the command
+    * requires that the command `notify-send` is installed
 * optionally clears the screen between executing the command
 * optinally restart the command if it is already executing when a modification is detected
 * optionally watch for metadata changes.

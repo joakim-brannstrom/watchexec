@@ -66,6 +66,7 @@ int cli(AppConfig conf) {
             ? (ContentEvents | MetadataEvents) : ContentEvents);
 
     MonitorResult[] eventFiles;
+    auto handleExitStatus = HandleExitStatus(conf.global.useNotifySend, conf.global.paths);
 
     while (true) {
         if (eventFiles.empty) {
@@ -103,14 +104,14 @@ int cli(AppConfig conf) {
                     }
 
                     if (eventFiles.empty) {
-                        printExitStatus(p.status);
+                        handleExitStatus.exitStatus(p.status);
                     } else {
                         p.kill;
                         p.wait;
                     }
                 } else {
                     p.wait;
-                    printExitStatus(p.status);
+                    handleExitStatus.exitStatus(p.status);
                 }
                 monitor.clear;
             } catch (Exception e) {
@@ -122,16 +123,44 @@ int cli(AppConfig conf) {
     }
 }
 
-void printExitStatus(int code) {
-    import std.conv : to;
+struct HandleExitStatus {
+    AbsolutePath[] roots;
+    bool useNotifySend;
 
-    auto msg = () {
-        if (code == 0)
-            return "exit status".color(Color.green);
-        return "exit status".color(Color.red);
-    }();
+    this(bool useNotifySend, AbsolutePath[] roots) {
+        this.useNotifySend = useNotifySend;
+        this.roots = roots;
+    }
 
-    logger.info(msg, " ", code);
+    void exitStatus(int code) {
+        import std.conv : to;
+        import std.process : spawnProcess, wait;
+
+        immutable msgExitStatus = "exit status";
+        immutable msgOk = "✓";
+        immutable msgNok = "✗";
+
+        if (useNotifySend) {
+            auto msg = () {
+                if (code == 0)
+                    return format!"%s %s %s\n%-(%s\n%)"(msgOk, msgExitStatus, code, roots);
+                return format!"%s %s %s\n%-(%s\n%)"(msgNok, msgExitStatus, code, roots);
+            }();
+
+            spawnProcess([
+                    "notify-send", "-u", "normal", "-t", "3000", "-a", "watchexec",
+                    msg
+                    ]).wait;
+        }
+
+        auto msg = () {
+            if (code == 0)
+                return format!"%s %s"(msgOk, msgExitStatus.color(Color.green));
+            return format!"%s %s"(msgNok, msgExitStatus.color(Color.red));
+        }();
+
+        logger.infof("%s %s", msg, code);
+    }
 }
 
 struct AppConfig {
@@ -148,6 +177,7 @@ struct AppConfig {
         bool clearScreen;
         bool restart;
         bool setEnv;
+        bool useNotifySend;
         bool useShell;
         bool watchMetadata;
         string progName;
@@ -194,6 +224,7 @@ AppConfig parseUserArgs(string[] args) {
             "env", "set WATCHEXEC_*_PATH environment variables when executing the command", &conf.global.setEnv,
             "e|ext", "file extensions, excluding dot, to watch (default: any)", &monitorExtensions,
             "meta", "watch for metadata changes (date, open/close, permission)", &conf.global.watchMetadata,
+            "notify", "use notify-send for desktop notification with commands exit status", &conf.global.useNotifySend,
             "re-exclude", "ignore modifications to paths matching the pattern (regex: .*)", &conf.global.exclude,
             "re-include", "ignore all modifications except those matching the pattern (regex: <empty>)", &conf.global.include,
             "r|restart", "restart the process if it's still running", &conf.global.restart,
