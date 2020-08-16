@@ -36,6 +36,8 @@ version (unittest) {
 
 private:
 
+immutable notifySendCmd = "notify-send";
+
 immutable defaultExclude = [
     "*/.DS_Store", "*.py[co]", "*/#*#", "*/.#*", "*/.*.kate-swp", "*/.*.sw?",
     "*/.*.sw?x", "*/.git/*"
@@ -156,7 +158,7 @@ struct HandleExitStatus {
             }();
 
             spawnProcess([
-                    "notify-send", "-u", "normal", "-t", "3000", "-a", "watchexec",
+                    notifySendCmd, "-u", "normal", "-t", "3000", "-a", "watchexec",
                     msg
                     ]).wait;
         }
@@ -209,7 +211,7 @@ AppConfig parseUserArgs(string[] args) {
     import std.algorithm : countUntil, map;
     import std.path : baseName;
     import std.traits : EnumMembers;
-    import my.file : existsAnd, isFile;
+    import my.file : existsAnd, isFile, whichFromEnv;
     static import std.getopt;
 
     AppConfig conf;
@@ -240,7 +242,7 @@ AppConfig parseUserArgs(string[] args) {
             "meta", "watch for metadata changes (date, open/close, permission)", &conf.global.watchMetadata,
             "no-default-ignore", "skip auto-ignoring of commonly ignored globs", &noDefaultIgnore,
             "no-vcs-ignore", "skip auto-loading of .gitignore files for filtering", &noVcsIgnore,
-            "notify", "use notify-send for desktop notification with commands exit status", &conf.global.useNotifySend,
+            "notify", format!"use %s for desktop notification with commands exit status"(notifySendCmd), &conf.global.useNotifySend,
             "r|restart", "restart the process if it's still running", &conf.global.restart,
             "shell", "run the command in a shell (/bin/sh)", &conf.global.useShell,
             "t|timeout", format!"max runtime of the command (default: %ss)"(timeout), &timeout,
@@ -266,6 +268,13 @@ AppConfig parseUserArgs(string[] args) {
             }
         } else if (!noDefaultIgnore) {
             conf.global.exclude ~= defaultExclude;
+        }
+
+        if (conf.global.useNotifySend) {
+            if (!whichFromEnv("PATH", notifySendCmd)) {
+                conf.global.useNotifySend = false;
+                logger.warningf("--notify requires the command %s", notifySendCmd);
+            }
         }
 
         conf.global.timeout = timeout.dur!"seconds";
