@@ -82,6 +82,43 @@ int cli(AppConfig conf) {
     MonitorResult[] eventFiles;
     auto handleExitStatus = HandleExitStatus(conf.global.useNotifySend, conf.global.paths);
 
+    void buildAndExecute() {
+        string[string] env;
+
+        if (conf.global.setEnv) {
+            env["WATCHEXEC_EVENT"] = eventFiles.map!(a => format!"%s:%s"(a.kind,
+                    a.path)).joiner(";").text;
+        }
+
+        auto p = spawnProcess(cmd, env).sandbox.timeout(conf.global.timeout).rcKill;
+
+        if (conf.global.restart) {
+            while (!p.tryWait && eventFiles.empty) {
+                eventFiles = monitor.wait(10.dur!"msecs");
+            }
+
+            if (eventFiles.empty) {
+                handleExitStatus.exitStatus(p.status);
+            } else {
+                p.kill;
+                p.wait;
+            }
+        } else {
+            p.wait;
+            handleExitStatus.exitStatus(p.status);
+        }
+        monitor.clear;
+    }
+
+    if (!conf.global.postPone) {
+        try {
+            buildAndExecute;
+        } catch(Exception e) {
+            logger.error(e.msg);
+            return 1;
+        }
+    }
+
     while (true) {
         if (eventFiles.empty) {
             eventFiles = monitor.wait(1000.dur!"weeks");
@@ -92,12 +129,6 @@ int cli(AppConfig conf) {
         }
 
         if (!eventFiles.empty) {
-            string[string] env;
-
-            if (conf.global.setEnv) {
-                env["WATCHEXEC_EVENT"] = eventFiles.map!(a => format!"%s:%s"(a.kind,
-                        a.path)).joiner(";").text;
-            }
 
             eventFiles = null;
 
@@ -110,24 +141,7 @@ int cli(AppConfig conf) {
             }
 
             try {
-                auto p = spawnProcess(cmd, env).sandbox.timeout(conf.global.timeout).rcKill;
-
-                if (conf.global.restart) {
-                    while (!p.tryWait && eventFiles.empty) {
-                        eventFiles = monitor.wait(10.dur!"msecs");
-                    }
-
-                    if (eventFiles.empty) {
-                        handleExitStatus.exitStatus(p.status);
-                    } else {
-                        p.kill;
-                        p.wait;
-                    }
-                } else {
-                    p.wait;
-                    handleExitStatus.exitStatus(p.status);
-                }
-                monitor.clear;
+                buildAndExecute;
             } catch (Exception e) {
                 logger.error(e.msg);
                 return 1;
@@ -189,6 +203,7 @@ struct AppConfig {
         Duration debounce;
         Duration timeout;
         bool clearScreen;
+        bool postPone;
         bool restart;
         bool setEnv;
         bool useNotifySend;
@@ -247,6 +262,7 @@ AppConfig parseUserArgs(string[] args) {
             "no-default-ignore", "skip auto-ignoring of commonly ignored globs", &noDefaultIgnore,
             "no-vcs-ignore", "skip auto-loading of .gitignore files for filtering", &noVcsIgnore,
             "notify", format!"use %s for desktop notification with commands exit status"(notifySendCmd), &conf.global.useNotifySend,
+            "p|postpone", "wait until first change to execute command", &conf.global.postPone,
             "r|restart", "restart the process if it's still running", &conf.global.restart,
             "shell", "run the command in a shell (/bin/sh)", &conf.global.useShell,
             "t|timeout", format!"max runtime of the command (default: %ss)"(timeout), &timeout,
