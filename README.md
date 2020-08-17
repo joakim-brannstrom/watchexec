@@ -17,7 +17,7 @@ and runs a command when it detects any modifications.
 * optionally watch for metadata changes.
 * sandbox feature which mean that when a process is terminated it also mean that all its children are killed
 * sets the following environment variables in the child process when `--env` is used:
-    * `$WATCHEXEC_EVENT_PATH` is a tuple of values "event type":"path"
+    * `$WATCHEXEC_EVENT` is a tuple of values "event type":"path"
     * If multiple files changed then the events are separated by ";"
 
 ## Usage Examples
