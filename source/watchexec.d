@@ -64,7 +64,7 @@ int cli(AppConfig conf) {
     }
 
     logger.infof("command to execute on change: %-(%s %)", conf.global.command);
-    logger.infof("watching for change: %s", conf.global.paths);
+    logger.infof("setting up notification for changes of: %s", conf.global.paths);
 
     const cmd = () {
         if (conf.global.useShell)
@@ -75,6 +75,7 @@ int cli(AppConfig conf) {
     auto monitor = Monitor(conf.global.paths, GlobFilter(conf.global.include,
             conf.global.exclude), conf.global.watchMetadata
             ? (ContentEvents | MetadataEvents) : ContentEvents);
+    logger.info("starting");
 
     MonitorResult[] eventFiles;
     auto handleExitStatus = HandleExitStatus(conf.global.useNotifySend, conf.global.paths);
