@@ -272,13 +272,6 @@ AppConfig parseUserArgs(string[] args) {
             conf.global.exclude ~= defaultExclude;
         }
 
-        if (conf.global.useNotifySend) {
-            if (!whichFromEnv("PATH", notifySendCmd)) {
-                conf.global.useNotifySend = false;
-                logger.warningf("--notify requires the command %s", notifySendCmd);
-            }
-        }
-
         conf.global.timeout = timeout.dur!"seconds";
         conf.global.debounce = debounce.dur!"msecs";
         conf.global.paths = paths.map!(a => AbsolutePath(a)).array;
