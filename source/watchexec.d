@@ -122,7 +122,7 @@ int cli(AppConfig conf) {
     if (!conf.global.postPone) {
         try {
             eventFiles = buildAndExecute(null);
-        } catch(Exception e) {
+        } catch (Exception e) {
             logger.error(e.msg);
             return 1;
         }
@@ -140,6 +140,10 @@ int cli(AppConfig conf) {
         if (!eventFiles.empty) {
             if (conf.global.debounce != Duration.zero) {
                 Thread.sleep(conf.global.debounce);
+                // by clearing events before executing the command it is
+                // possible to assure that any events that trigger during the
+                // execution are from the command
+                monitor.clear;
             }
 
             if (conf.global.clearScreen) {
