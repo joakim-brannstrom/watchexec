@@ -79,11 +79,11 @@ int cli(AppConfig conf) {
             ? (ContentEvents | MetadataEvents) : ContentEvents);
     logger.info("starting");
 
-    MonitorResult[] eventFiles;
     auto handleExitStatus = HandleExitStatus(conf.global.useNotifySend, conf.global.paths);
 
-    void buildAndExecute() {
+    MonitorResult[] buildAndExecute(MonitorResult[] eventFiles) {
         string[string] env;
+        MonitorResult[] rval;
 
         if (conf.global.setEnv) {
             env["WATCHEXEC_EVENT"] = eventFiles.map!(a => format!"%s:%s"(a.kind,
@@ -94,7 +94,7 @@ int cli(AppConfig conf) {
 
         if (conf.global.restart) {
             while (!p.tryWait && eventFiles.empty) {
-                eventFiles = monitor.wait(10.dur!"msecs");
+                rval = monitor.wait(10.dur!"msecs");
             }
 
             if (eventFiles.empty) {
@@ -107,12 +107,21 @@ int cli(AppConfig conf) {
             p.wait;
             handleExitStatus.exitStatus(p.status);
         }
-        monitor.clear;
+
+        if (conf.global.clearEvents) {
+            // the events can fire a bit late when e.g. writing to an NFS mount
+            // point.
+            monitor.clear(10.dur!"msecs");
+        }
+
+        return rval;
     }
+
+    MonitorResult[] eventFiles;
 
     if (!conf.global.postPone) {
         try {
-            buildAndExecute;
+            eventFiles = buildAndExecute(null);
         } catch(Exception e) {
             logger.error(e.msg);
             return 1;
@@ -129,9 +138,6 @@ int cli(AppConfig conf) {
         }
 
         if (!eventFiles.empty) {
-
-            eventFiles = null;
-
             if (conf.global.debounce != Duration.zero) {
                 Thread.sleep(conf.global.debounce);
             }
@@ -141,7 +147,7 @@ int cli(AppConfig conf) {
             }
 
             try {
-                buildAndExecute;
+                eventFiles = buildAndExecute(eventFiles);
             } catch (Exception e) {
                 logger.error(e.msg);
                 return 1;
@@ -202,6 +208,7 @@ struct AppConfig {
         AbsolutePath[] paths;
         Duration debounce;
         Duration timeout;
+        bool clearEvents;
         bool clearScreen;
         bool postPone;
         bool restart;
@@ -243,6 +250,7 @@ AppConfig parseUserArgs(string[] args) {
             args = args[0 .. idx];
         }
 
+        bool noClearEvents;
         bool noDefaultIgnore;
         bool noVcsIgnore;
         string[] include;
@@ -259,6 +267,7 @@ AppConfig parseUserArgs(string[] args) {
             "e|ext", "file extensions, excluding dot, to watch (default: any)", &monitorExtensions,
             "include", "ignore all modifications except those matching the pattern (glob: *)", &conf.global.include,
             "meta", "watch for metadata changes (date, open/close, permission)", &conf.global.watchMetadata,
+            "no-clear-events", "do not clear the events that occured when executing the command", &noClearEvents,
             "no-default-ignore", "skip auto-ignoring of commonly ignored globs", &noDefaultIgnore,
             "no-vcs-ignore", "skip auto-loading of .gitignore files for filtering", &noVcsIgnore,
             "notify", format!"use %s for desktop notification with commands exit status"(notifySendCmd), &conf.global.useNotifySend,
@@ -270,6 +279,8 @@ AppConfig parseUserArgs(string[] args) {
             "w|watch", "watch a specific directory", &paths,
             );
         // dfmt on
+
+        conf.global.clearEvents = !noClearEvents;
 
         include ~= monitorExtensions.map!(a => format!"*.%s"(a)).array;
         if (include.empty) {
