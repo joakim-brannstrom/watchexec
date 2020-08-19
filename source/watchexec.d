@@ -111,7 +111,7 @@ int cli(AppConfig conf) {
         if (conf.global.clearEvents) {
             // the events can fire a bit late when e.g. writing to an NFS mount
             // point.
-            monitor.clear(10.dur!"msecs");
+            monitor.collect(10.dur!"msecs");
         }
 
         return rval;
@@ -139,11 +139,7 @@ int cli(AppConfig conf) {
 
         if (!eventFiles.empty) {
             if (conf.global.debounce != Duration.zero) {
-                Thread.sleep(conf.global.debounce);
-                // by clearing events before executing the command it is
-                // possible to assure that any events that trigger during the
-                // execution are from the command
-                monitor.clear;
+                eventFiles ~= monitor.collect(conf.global.debounce);
             }
 
             if (conf.global.clearScreen) {
