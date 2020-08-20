@@ -93,11 +93,11 @@ int cli(AppConfig conf) {
         auto p = spawnProcess(cmd, env).sandbox.timeout(conf.global.timeout).rcKill;
 
         if (conf.global.restart) {
-            while (!p.tryWait && eventFiles.empty) {
+            while (!p.tryWait && rval.empty) {
                 rval = monitor.wait(10.dur!"msecs");
             }
 
-            if (eventFiles.empty) {
+            if (rval.empty) {
                 handleExitStatus.exitStatus(p.status);
             } else {
                 p.kill;
