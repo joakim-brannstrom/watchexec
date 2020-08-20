@@ -79,7 +79,7 @@ int cli(AppConfig conf) {
             ? (ContentEvents | MetadataEvents) : ContentEvents);
     logger.info("starting");
 
-    auto handleExitStatus = HandleExitStatus(conf.global.useNotifySend, conf.global.paths);
+    auto handleExitStatus = HandleExitStatus(conf.global.useNotifySend);
 
     MonitorResult[] buildAndExecute(MonitorResult[] eventFiles) {
         string[string] env;
@@ -158,12 +158,12 @@ int cli(AppConfig conf) {
 }
 
 struct HandleExitStatus {
-    AbsolutePath[] roots;
     bool useNotifySend;
+    string notifyMsg;
 
-    this(bool useNotifySend, AbsolutePath[] roots) {
-        this.useNotifySend = useNotifySend;
-        this.roots = roots;
+    this(string notifyMsg) {
+        this.useNotifySend = !notifyMsg.empty;
+        this.notifyMsg = notifyMsg;
     }
 
     void exitStatus(int code) {
@@ -177,8 +177,8 @@ struct HandleExitStatus {
         if (useNotifySend) {
             auto msg = () {
                 if (code == 0)
-                    return format!"%s %s %s\n%-(%s\n%)"(msgOk, msgExitStatus, code, roots);
-                return format!"%s %s %s\n%-(%s\n%)"(msgNok, msgExitStatus, code, roots);
+                    return format!"%s %s %s\n%s"(msgOk, msgExitStatus, code, notifyMsg);
+                return format!"%s %s %s\n%s"(msgNok, msgExitStatus, code, notifyMsg);
             }();
 
             spawnProcess([
@@ -213,10 +213,10 @@ struct AppConfig {
         bool postPone;
         bool restart;
         bool setEnv;
-        bool useNotifySend;
         bool useShell;
         bool watchMetadata;
         string progName;
+        string useNotifySend;
         string[] command;
 
         string[] include;
@@ -270,7 +270,7 @@ AppConfig parseUserArgs(string[] args) {
             "no-clear-events", "do not clear the events that occured when executing the command", &noClearEvents,
             "no-default-ignore", "skip auto-ignoring of commonly ignored globs", &noDefaultIgnore,
             "no-vcs-ignore", "skip auto-loading of .gitignore files for filtering", &noVcsIgnore,
-            "notify", format!"use %s for desktop notification with commands exit status"(notifySendCmd), &conf.global.useNotifySend,
+            "notify", format!"use %s for desktop notification with commands exit status and this msg"(notifySendCmd), &conf.global.useNotifySend,
             "p|postpone", "wait until first change to execute command", &conf.global.postPone,
             "r|restart", "restart the process if it's still running", &conf.global.restart,
             "shell", "run the command in a shell (/bin/sh)", &conf.global.useShell,
@@ -303,7 +303,7 @@ AppConfig parseUserArgs(string[] args) {
 
         if (conf.global.useNotifySend) {
             if (!whichFromEnv("PATH", notifySendCmd)) {
-                conf.global.useNotifySend = false;
+                conf.global.useNotifySend = null;
                 logger.warningf("--notify requires the command %s", notifySendCmd);
             }
         }
