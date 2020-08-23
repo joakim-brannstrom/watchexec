@@ -297,7 +297,7 @@ AppConfig parseUserArgs(string[] args) {
             } catch (Exception e) {
                 logger.warning(e.msg);
             }
-        } else if (!noDefaultIgnore) {
+        } else if (!noDefaultIgnore && !noVcsIgnore) {
             conf.global.exclude ~= defaultExclude;
         }
 
