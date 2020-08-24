@@ -103,6 +103,7 @@ int cli(AppConfig conf) {
             } else {
                 p.kill(conf.global.signal);
                 p.wait;
+                logger.info("restarting command".color(Color.yellow));
             }
         } else {
             p.wait;
