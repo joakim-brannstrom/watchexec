@@ -90,7 +90,8 @@ int cli(AppConfig conf) {
                     a.path)).joiner(";").text;
         }
 
-        auto p = spawnProcess(cmd, env).sandbox.timeout(conf.global.timeout).rcKill;
+        auto p = spawnProcess(cmd, env).sandbox.timeout(conf.global.timeout)
+            .rcKill(conf.global.signal);
 
         if (conf.global.restart) {
             while (!p.tryWait && rval.empty) {
@@ -100,7 +101,7 @@ int cli(AppConfig conf) {
             if (rval.empty) {
                 handleExitStatus.exitStatus(p.status);
             } else {
-                p.kill;
+                p.kill(conf.global.signal);
                 p.wait;
             }
         } else {
@@ -201,6 +202,8 @@ struct AppConfig {
     static import std.getopt;
 
     static struct Global {
+        import core.sys.posix.signal : SIGKILL;
+
         std.getopt.GetoptResult helpInfo;
         VerboseMode verbosity;
         bool help = true;
@@ -215,6 +218,7 @@ struct AppConfig {
         bool setEnv;
         bool useShell;
         bool watchMetadata;
+        int signal = SIGKILL;
         string progName;
         string useNotifySend;
         string[] command;
@@ -274,6 +278,7 @@ AppConfig parseUserArgs(string[] args) {
             "p|postpone", "wait until first change to execute command", &conf.global.postPone,
             "r|restart", "restart the process if it's still running", &conf.global.restart,
             "shell", "run the command in a shell (/bin/sh)", &conf.global.useShell,
+            "s|signal", "send signal to process upon changes, e.g. SIGHUP (default: SIGKILL)", &conf.global.signal,
             "t|timeout", format!"max runtime of the command (default: %ss)"(timeout), &timeout,
             "v|verbose", format("Set the verbosity (%-(%s, %))", [EnumMembers!(VerboseMode)]), &conf.global.verbosity,
             "w|watch", "watch a specific directory", &paths,
