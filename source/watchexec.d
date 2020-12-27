@@ -255,7 +255,7 @@ AppConfig parseUserArgs(string[] args) {
             args = args[0 .. idx];
         }
 
-        bool noClearEvents;
+        bool clearEvents;
         bool noDefaultIgnore;
         bool noVcsIgnore;
         string[] include;
@@ -265,6 +265,7 @@ AppConfig parseUserArgs(string[] args) {
         uint timeout = 3600;
         // dfmt off
         conf.global.helpInfo = std.getopt.getopt(args,
+            "clear-events", "clear the events that occured when executing the command", &clearEvents,
             "c|clear", "clear screen before executing command",&conf.global.clearScreen,
             "d|debounce", format!"set the timeout between detected change and command execution (default: %sms)"(debounce), &debounce,
             "env", "set WATCHEXEC_*_PATH environment variables when executing the command", &conf.global.setEnv,
@@ -272,7 +273,6 @@ AppConfig parseUserArgs(string[] args) {
             "e|ext", "file extensions, excluding dot, to watch (default: any)", &monitorExtensions,
             "include", "ignore all modifications except those matching the pattern (glob: *)", &conf.global.include,
             "meta", "watch for metadata changes (date, open/close, permission)", &conf.global.watchMetadata,
-            "no-clear-events", "do not clear the events that occured when executing the command", &noClearEvents,
             "no-default-ignore", "skip auto-ignoring of commonly ignored globs", &noDefaultIgnore,
             "no-vcs-ignore", "skip auto-loading of .gitignore files for filtering", &noVcsIgnore,
             "notify", format!"use %s for desktop notification with commands exit status and this msg"(notifySendCmd), &conf.global.useNotifySend,
@@ -286,7 +286,7 @@ AppConfig parseUserArgs(string[] args) {
             );
         // dfmt on
 
-        conf.global.clearEvents = !noClearEvents;
+        conf.global.clearEvents = clearEvents;
 
         include ~= monitorExtensions.map!(a => format!"*.%s"(a)).array;
         if (include.empty) {
