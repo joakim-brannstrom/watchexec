@@ -164,10 +164,12 @@ int cli(AppConfig conf) {
 }
 
 int cliOneshot(AppConfig conf, const string[] cmd, HandleExitStatus handleExitStatus) {
-    import std.file : exists, readText, isDir, isFile, timeLastModified, getSize;
-    import std.stdio : File;
     import std.algorithm : map, filter, joiner;
     import std.datetime : Clock;
+    import std.file : exists, readText, isDir, isFile, timeLastModified, getSize;
+    import std.parallelism : taskPool, task;
+    import std.stdio : File;
+    import std.typecons : tuple, Tuple;
     import my.optional;
     import watchexec_internal.oneshot;
 
@@ -199,15 +201,20 @@ int cliOneshot(AppConfig conf, const string[] cmd, HandleExitStatus handleExitSt
     auto gf = GlobFilter(conf.global.include, conf.global.exclude);
     bool isChanged;
     FileDb newDb;
+
+    static OneShotFile[] runOneshot(Tuple!(AbsolutePath, GlobFilter) data) {
+        return OneShotRange(data[0], data[1]).filter!(a => a.hasValue)
+            .map!(a => a.orElse(OneShotFile.init))
+            .array;
+    }
+
     try {
-        foreach (f; conf.global
+        foreach (f; taskPool.amap!runOneshot(conf.global
                 .paths
                 .filter!isDir
                 .filter!exists
-                .map!(a => OneShotRange(AbsolutePath(a), gf))
-                .joiner
-                .filter!(a => a.hasValue)
-                .map!(a => a.orElse(OneShotFile.init))) {
+                .map!(a => tuple(a, gf))
+                .array).joiner) {
             const changed = update(db, newDb, f);
             isChanged = isChanged || changed;
         }
@@ -226,15 +233,20 @@ int cliOneshot(AppConfig conf, const string[] cmd, HandleExitStatus handleExitSt
     if (isChanged) {
         import proc;
 
+        auto saveDb = task(() {
+            try {
+                File(conf.global.jsonDb, "w").write(toJson(newDb));
+            } catch (Exception e) {
+                logger.info(e.msg).collectException;
+            }
+        });
+        saveDb.executeInNewThread;
+
         auto p = spawnProcess(cmd).sandbox.timeout(conf.global.timeout).rcKill(conf.global.signal);
         p.wait;
         exitStatus = p.status;
 
-        try {
-            File(conf.global.jsonDb, "w").write(toJson(newDb));
-        } catch (Exception e) {
-            logger.info(e.msg).collectException;
-        }
+        saveDb.yieldForce;
 
         logger.trace("old database: ", db);
         logger.trace("new database: ", newDb);
