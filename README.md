@@ -19,6 +19,8 @@ and runs a command when it detects any modifications.
 * sets the following environment variables in the child process when `--env` is used:
     * `$WATCHEXEC_EVENT` is a tuple of values "event type":"path"
     * If multiple files changed then the events are separated by ";"
+* oneshot mode wherein watchexec compare the files on disk to a json database
+  and only execute the command if the files have changed.
 
 ## Usage Examples
 
