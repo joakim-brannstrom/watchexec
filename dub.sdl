@@ -4,10 +4,10 @@ authors "Joakim Brännström"
 copyright "Copyright © 2020, Joakim Brännström"
 license "BSL-1.0"
 
-dependency "colorlog" version="~>0.0.2"
-dependency "sumtype" version="~>1.0.1"
-dependency "proc" version="~>1.0.9"
-dependency "my" version="~>0.0.24"
+dependency "colorlog" version="~>0.0.5"
+dependency "sumtype" version="~>1.1.1"
+dependency "proc" version="~>1.1.1"
+dependency "my" version="~>0.0.29"
 
 targetPath "build"
 
