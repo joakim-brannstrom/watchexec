@@ -229,16 +229,16 @@ int cliOneshot(AppConfig conf, const string[] cmd, HandleExitStatus handleExitSt
         auto p = spawnProcess(cmd).sandbox.timeout(conf.global.timeout).rcKill(conf.global.signal);
         p.wait;
         exitStatus = p.status;
-    }
 
-    try {
-        File(conf.global.jsonDb, "w").write(toJson(newDb));
-    } catch (Exception e) {
-        logger.info(e.msg).collectException;
-    }
+        try {
+            File(conf.global.jsonDb, "w").write(toJson(newDb));
+        } catch (Exception e) {
+            logger.info(e.msg).collectException;
+        }
 
-    logger.trace("old database: ", db);
-    logger.trace("new database: ", newDb);
+        logger.trace("old database: ", db);
+        logger.trace("new database: ", newDb);
+    }
 
     handleExitStatus.exitStatus(exitStatus);
     return exitStatus;
