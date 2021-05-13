@@ -66,20 +66,24 @@ int cli(AppConfig conf) {
     }
 
     logger.infof("command to execute on change: %-(%s %)", conf.global.command);
-    logger.infof("setting up notification for changes of: %s", conf.global.paths);
 
     const cmd = () {
         if (conf.global.useShell)
-            return ["/bin/sh", "-c"] ~ format!"%-(%s %)"(conf.global.command);
-        return conf.global.command;
+            logger.info("--shell is deprecated");
+        return ["/bin/sh", "-c", format!"%-(%s %)"(conf.global.command)];
     }();
+
+    auto handleExitStatus = HandleExitStatus(conf.global.useNotifySend);
+
+    if (conf.global.oneShotMode)
+        return cliOneshot(conf, cmd, handleExitStatus);
+
+    logger.infof("setting up notification for changes of: %s", conf.global.paths);
+    logger.info("starting");
 
     auto monitor = Monitor(conf.global.paths, GlobFilter(conf.global.include,
             conf.global.exclude), conf.global.watchMetadata
             ? (ContentEvents | MetadataEvents) : ContentEvents);
-    logger.info("starting");
-
-    auto handleExitStatus = HandleExitStatus(conf.global.useNotifySend);
 
     MonitorResult[] buildAndExecute(MonitorResult[] eventFiles) {
         string[string] env;
@@ -159,6 +163,70 @@ int cli(AppConfig conf) {
     }
 }
 
+int cliOneshot(AppConfig conf, const string[] cmd, HandleExitStatus handleExitStatus) {
+    import std.file : exists, readText;
+    import std.stdio : File;
+    import std.algorithm : map, filter, joiner;
+    import my.optional;
+    import watchexec_internal.oneshot;
+
+    auto db = () {
+        if (!exists(conf.global.jsonDb))
+            return FileDb.init;
+
+        try {
+            logger.infof("Reading %s", conf.global.jsonDb);
+            return fromJson(readText(conf.global.jsonDb));
+        } catch (Exception e) {
+        }
+
+        return FileDb.init;
+    }();
+    logger.trace("database: ", db);
+
+    auto gf = GlobFilter(conf.global.include, conf.global.exclude);
+    bool isChanged;
+    FileDb newDb;
+    try {
+        foreach (f; conf.global
+                .paths
+                .map!(a => FileChecksumRange(AbsolutePath(a), gf))
+                .joiner
+                .filter!(a => a.hasValue)
+                .map!(a => a.orElse(OneShotFile.init))) {
+            const changed = db.isChanged(f);
+            isChanged = isChanged || changed;
+
+            if (changed)
+                newDb.add(f);
+            else if (auto v = f.path in db.files)
+                newDb.add(*v); // avoid checksum calculation
+            else
+                newDb.add(f);
+        }
+    } catch (Exception e) {
+        logger.info(e.msg).collectException;
+    }
+
+    int exitStatus;
+    if (isChanged) {
+        import proc;
+
+        auto p = spawnProcess(cmd).sandbox.timeout(conf.global.timeout).rcKill(conf.global.signal);
+        p.wait;
+        exitStatus = p.status;
+    }
+
+    try {
+        File(conf.global.jsonDb, "w").write(toJson(newDb));
+    } catch (Exception e) {
+        logger.info(e.msg).collectException;
+    }
+
+    handleExitStatus.exitStatus(exitStatus);
+    return exitStatus;
+}
+
 struct HandleExitStatus {
     bool useNotifySend;
     string notifyMsg;
@@ -214,12 +282,14 @@ struct AppConfig {
         Duration timeout;
         bool clearEvents;
         bool clearScreen;
+        bool oneShotMode;
         bool postPone;
         bool restart;
         bool setEnv;
         bool useShell;
         bool watchMetadata;
         int signal = SIGKILL;
+        string jsonDb = "watchexec_db.json";
         string progName;
         string useNotifySend;
         string[] command;
@@ -276,9 +346,11 @@ AppConfig parseUserArgs(string[] args) {
             "no-default-ignore", "skip auto-ignoring of commonly ignored globs", &noDefaultIgnore,
             "no-vcs-ignore", "skip auto-loading of .gitignore files for filtering", &noVcsIgnore,
             "notify", format!"use %s for desktop notification with commands exit status and this msg"(notifySendCmd), &conf.global.useNotifySend,
+            "o|oneshot", "run in one-shot mode where the command is executed if files are different from watchexec.json", &conf.global.oneShotMode,
+            "oneshot-db", "json database to use", &conf.global.jsonDb,
             "p|postpone", "wait until first change to execute command", &conf.global.postPone,
             "r|restart", "restart the process if it's still running", &conf.global.restart,
-            "shell", "run the command in a shell (/bin/sh)", &conf.global.useShell,
+            "shell", "(deprecated) run the command in a shell (/bin/sh)", &conf.global.useShell,
             "s|signal", "send signal to process upon changes, e.g. SIGHUP (default: SIGKILL)", &conf.global.signal,
             "t|timeout", format!"max runtime of the command (default: %ss)"(timeout), &timeout,
             "v|verbose", format("Set the verbosity (%-(%s, %))", [EnumMembers!(VerboseMode)]), &conf.global.verbosity,
