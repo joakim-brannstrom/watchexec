@@ -28,6 +28,12 @@ struct OneShotFile {
 
     FileSize size;
 
+    bool hasChecksum;
+
+    private {
+        Checksum64 checksum_;
+    }
+
     this(AbsolutePath path, TimeStamp timeStamp, FileSize size) {
         this.path = path;
         this.timeStamp = timeStamp;
@@ -40,11 +46,6 @@ struct OneShotFile {
         this.size = size;
         this.checksum_ = cs;
         this.hasChecksum = true;
-    }
-
-    private {
-        Checksum64 checksum_;
-        bool hasChecksum;
     }
 
     Checksum64 checksum() nothrow {
@@ -155,7 +156,7 @@ JSONValue toJson(ref FileDb db) {
         try {
             JSONValue v;
             v["p"] = relativePath(fc.path.toString);
-            v["c"] = fc.checksum.c0.to!string;
+            v["c"] = fc.hasChecksum ? fc.checksum.c0.to!string : "0";
             v["t"] = fc.timeStamp.get.to!string;
             v["s"] = fc.size.get.to!string;
             app.put(v);
