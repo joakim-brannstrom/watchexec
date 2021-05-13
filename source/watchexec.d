@@ -190,7 +190,7 @@ int cliOneshot(AppConfig conf, const string[] cmd, HandleExitStatus handleExitSt
     try {
         foreach (f; conf.global
                 .paths
-                .map!(a => FileChecksumRange(AbsolutePath(a), gf))
+                .map!(a => OneShotRange(AbsolutePath(a), gf))
                 .joiner
                 .filter!(a => a.hasValue)
                 .map!(a => a.orElse(OneShotFile.init))) {

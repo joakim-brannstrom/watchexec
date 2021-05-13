@@ -17,20 +17,27 @@ import my.path : AbsolutePath;
 import my.filter : GlobFilter;
 import my.optional;
 
+alias FileSize = NamedType!(ulong, Tag!"FileSize", ulong.init, TagStringable, Comparable);
+alias TimeStamp = NamedType!(long, Tag!"TimeStamp", long.init, TagStringable, Comparable);
+
 struct OneShotFile {
     AbsolutePath path;
 
     /// unix time in seconds
-    long timeStamp;
+    TimeStamp timeStamp;
 
-    this(AbsolutePath path, long timeStamp) {
+    FileSize size;
+
+    this(AbsolutePath path, TimeStamp timeStamp, FileSize size) {
         this.path = path;
         this.timeStamp = timeStamp;
+        this.size = size;
     }
 
-    this(AbsolutePath path, long timeStamp, Checksum64 cs) {
+    this(AbsolutePath path, TimeStamp timeStamp, FileSize size, Checksum64 cs) {
         this.path = path;
         this.timeStamp = timeStamp;
+        this.size = size;
         this.checksum_ = cs;
         this.hasChecksum = true;
     }
@@ -57,7 +64,7 @@ struct OneShotFile {
     }
 }
 
-struct FileChecksumRange {
+struct OneShotRange {
     import std.file : dirEntries, SpanMode;
     import std.traits : ReturnType;
 
@@ -75,7 +82,8 @@ struct FileChecksumRange {
         assert(!empty, "Can't get front of an empty range");
         auto f = entries.front;
         if (f.isFile && gf.match(f.name)) {
-            return OneShotFile(AbsolutePath(f.name), f.timeLastModified.toUnixTime).some;
+            return OneShotFile(AbsolutePath(f.name),
+                    f.timeLastModified.toUnixTime.TimeStamp, f.size.FileSize).some;
         }
         return none!OneShotFile;
     }
@@ -99,7 +107,7 @@ struct FileDb {
 
     bool isChanged(ref OneShotFile fc) {
         if (auto v = fc.path in files) {
-            if (v.timeStamp == fc.timeStamp)
+            if (v.timeStamp == fc.timeStamp && v.size == fc.size)
                 return false;
             return v.checksum != fc.checksum;
         }
@@ -116,7 +124,8 @@ FileDb fromJson(string txt) nothrow {
         foreach (a; parseJSON(txt).array) {
             try {
                 rval.add(OneShotFile(AbsolutePath(a["p"].str),
-                        a["t"].str.to!long, Checksum64(a["c"].str.to!ulong)));
+                        a["t"].str.to!long.TimeStamp,
+                        a["s"].str.to!ulong.FileSize, Checksum64(a["c"].str.to!ulong)));
             } catch (Exception e) {
                 logger.trace(e.msg).collectException;
             }
@@ -147,7 +156,8 @@ JSONValue toJson(ref FileDb db) {
             JSONValue v;
             v["p"] = relativePath(fc.path.toString);
             v["c"] = fc.checksum.c0.to!string;
-            v["t"] = fc.timeStamp.to!string;
+            v["t"] = fc.timeStamp.get.to!string;
+            v["s"] = fc.size.get.to!string;
             app.put(v);
         } catch (Exception e) {
         }
