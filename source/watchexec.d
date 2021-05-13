@@ -164,11 +164,24 @@ int cli(AppConfig conf) {
 }
 
 int cliOneshot(AppConfig conf, const string[] cmd, HandleExitStatus handleExitStatus) {
-    import std.file : exists, readText;
+    import std.file : exists, readText, isDir, isFile, timeLastModified, getSize;
     import std.stdio : File;
     import std.algorithm : map, filter, joiner;
+    import std.datetime : Clock;
     import my.optional;
     import watchexec_internal.oneshot;
+
+    static bool update(ref FileDb db, ref FileDb newDb, ref OneShotFile f) {
+        const changed = db.isChanged(f);
+
+        if (changed)
+            newDb.add(f);
+        else if (auto v = f.path in db.files)
+            newDb.add(*v); // avoid checksum calculation
+        else
+            newDb.add(f);
+        return changed;
+    }
 
     auto db = () {
         if (!exists(conf.global.jsonDb))
@@ -182,7 +195,6 @@ int cliOneshot(AppConfig conf, const string[] cmd, HandleExitStatus handleExitSt
 
         return FileDb.init;
     }();
-    logger.trace("database: ", db);
 
     auto gf = GlobFilter(conf.global.include, conf.global.exclude);
     bool isChanged;
@@ -190,19 +202,21 @@ int cliOneshot(AppConfig conf, const string[] cmd, HandleExitStatus handleExitSt
     try {
         foreach (f; conf.global
                 .paths
+                .filter!isDir
+                .filter!exists
                 .map!(a => OneShotRange(AbsolutePath(a), gf))
                 .joiner
                 .filter!(a => a.hasValue)
                 .map!(a => a.orElse(OneShotFile.init))) {
-            const changed = db.isChanged(f);
+            const changed = update(db, newDb, f);
             isChanged = isChanged || changed;
+        }
 
-            if (changed)
-                newDb.add(f);
-            else if (auto v = f.path in db.files)
-                newDb.add(*v); // avoid checksum calculation
-            else
-                newDb.add(f);
+        foreach (fname; conf.global.paths.filter!isFile) {
+            auto f = OneShotFile(AbsolutePath(fname), TimeStamp(timeLastModified(fname.toString,
+                    Clock.currTime).toUnixTime), FileSize(getSize(fname)));
+            const changed = update(db, newDb, f);
+            isChanged = isChanged || changed;
         }
     } catch (Exception e) {
         logger.info(e.msg).collectException;
@@ -222,6 +236,9 @@ int cliOneshot(AppConfig conf, const string[] cmd, HandleExitStatus handleExitSt
     } catch (Exception e) {
         logger.info(e.msg).collectException;
     }
+
+    logger.trace("old database: ", db);
+    logger.trace("new database: ", newDb);
 
     handleExitStatus.exitStatus(exitStatus);
     return exitStatus;
