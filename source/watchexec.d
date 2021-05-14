@@ -174,6 +174,7 @@ int cliOneshot(AppConfig conf, const string[] cmd,
     import std.parallelism : taskPool, task;
     import std.stdio : File;
     import std.typecons : tuple, Tuple;
+    import my.file : existsAnd;
     import my.optional;
     import watchexec_internal.oneshot;
 
@@ -214,8 +215,7 @@ int cliOneshot(AppConfig conf, const string[] cmd,
     try {
         foreach (f; taskPool.amap!runOneshot(conf.global
                 .paths
-                .filter!isDir
-                .filter!exists
+                .filter!(existsAnd!isDir)
                 .map!(a => tuple(a, defaultFilter))
                 .array).joiner) {
             const changed = update(db, newDb, f);
