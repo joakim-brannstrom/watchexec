@@ -65,6 +65,10 @@ int cli(AppConfig conf) {
         return 1;
     }
 
+    auto defaultFilter = GlobFilter(conf.global.include, conf.global.exclude);
+    auto recurseFilter = conf.global.useVcsIgnore
+        ? parseGitIgnoreRecursive(conf.global.include, conf.global.paths) : null;
+
     logger.infof("command to execute on change: %-(%s %)", conf.global.command);
 
     const cmd = () {
@@ -76,14 +80,13 @@ int cli(AppConfig conf) {
     auto handleExitStatus = HandleExitStatus(conf.global.useNotifySend);
 
     if (conf.global.oneShotMode)
-        return cliOneshot(conf, cmd, handleExitStatus);
+        return cliOneshot(conf, cmd, handleExitStatus, defaultFilter);
 
-    logger.infof("setting up notification for changes of: %s", conf.global.paths);
+    logger.infof("watching: %s", conf.global.paths);
     logger.info("starting");
 
-    auto monitor = Monitor(conf.global.paths, GlobFilter(conf.global.include,
-            conf.global.exclude), conf.global.watchMetadata
-            ? (ContentEvents | MetadataEvents) : ContentEvents);
+    auto monitor = Monitor(conf.global.paths, defaultFilter, recurseFilter,
+            conf.global.watchMetadata ? (ContentEvents | MetadataEvents) : ContentEvents);
 
     MonitorResult[] buildAndExecute(MonitorResult[] eventFiles) {
         string[string] env;
@@ -163,7 +166,8 @@ int cli(AppConfig conf) {
     }
 }
 
-int cliOneshot(AppConfig conf, const string[] cmd, HandleExitStatus handleExitStatus) {
+int cliOneshot(AppConfig conf, const string[] cmd,
+        HandleExitStatus handleExitStatus, GlobFilter defaultFilter) {
     import std.algorithm : map, filter, joiner;
     import std.datetime : Clock;
     import std.file : exists, readText, isDir, isFile, timeLastModified, getSize;
@@ -198,7 +202,6 @@ int cliOneshot(AppConfig conf, const string[] cmd, HandleExitStatus handleExitSt
         return FileDb.init;
     }();
 
-    auto gf = GlobFilter(conf.global.include, conf.global.exclude);
     bool isChanged;
     FileDb newDb;
 
@@ -213,7 +216,7 @@ int cliOneshot(AppConfig conf, const string[] cmd, HandleExitStatus handleExitSt
                 .paths
                 .filter!isDir
                 .filter!exists
-                .map!(a => tuple(a, gf))
+                .map!(a => tuple(a, defaultFilter))
                 .array).joiner) {
             const changed = update(db, newDb, f);
             isChanged = isChanged || changed;
@@ -309,6 +312,7 @@ struct AppConfig {
         AbsolutePath[] paths;
         Duration debounce;
         Duration timeout;
+        bool useVcsIgnore;
         bool clearEvents;
         bool clearScreen;
         bool oneShotMode;
@@ -367,7 +371,7 @@ AppConfig parseUserArgs(string[] args) {
             "clear-events", "clear the events that occured when executing the command", &clearEvents,
             "c|clear", "clear screen before executing command",&conf.global.clearScreen,
             "d|debounce", format!"set the timeout between detected change and command execution (default: %sms)"(debounce), &debounce,
-            "env", "set WATCHEXEC_*_PATH environment variables when executing the command", &conf.global.setEnv,
+            "env", "set WATCHEXEC_EVENT environment variables when executing the command", &conf.global.setEnv,
             "exclude", "ignore modifications to paths matching the pattern (glob: <empty>)", &conf.global.exclude,
             "e|ext", "file extensions, excluding dot, to watch (default: any)", &monitorExtensions,
             "include", "ignore all modifications except those matching the pattern (glob: *)", &conf.global.include,
@@ -407,6 +411,7 @@ AppConfig parseUserArgs(string[] args) {
         } else if (!noDefaultIgnore && !noVcsIgnore) {
             conf.global.exclude ~= defaultExclude;
         }
+        conf.global.useVcsIgnore = !noVcsIgnore;
 
         if (conf.global.useNotifySend) {
             if (!whichFromEnv("PATH", notifySendCmd)) {
@@ -483,4 +488,24 @@ repo.tar.gz`);
             ".dub", "docs.json", "__dummy.html", "*.lst", "__test__*__",
             "target/", "**/*.rs.bk", "*.pyc", "repo.tar.gz"
             ]);
+}
+
+GlobFilter[AbsolutePath] parseGitIgnoreRecursive(string[] includes, AbsolutePath[] roots) {
+    import std.array : appender;
+    import std.file : dirEntries, SpanMode, isFile, readText;
+    import std.path : baseName, dirName;
+
+    GlobFilter[AbsolutePath] rval;
+
+    foreach (gf; roots.map!(a => dirEntries(a.toString, SpanMode.depth))
+            .joiner
+            .filter!isFile
+            .filter!(a => a.baseName == ".gitignore")) {
+        try {
+            rval[AbsolutePath(gf.name.dirName)] = GlobFilter(includes, parseGitIgnore(readText(gf)));
+        } catch (Exception e) {
+        }
+    }
+
+    return rval;
 }
