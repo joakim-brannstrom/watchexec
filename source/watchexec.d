@@ -492,12 +492,14 @@ repo.tar.gz`);
 
 GlobFilter[AbsolutePath] parseGitIgnoreRecursive(string[] includes, AbsolutePath[] roots) {
     import std.array : appender;
-    import std.file : dirEntries, SpanMode, isFile, readText;
+    import std.file : dirEntries, SpanMode, isFile, readText, isDir;
     import std.path : baseName, dirName;
+    import my.file : existsAnd;
 
     GlobFilter[AbsolutePath] rval;
 
-    foreach (gf; roots.map!(a => dirEntries(a.toString, SpanMode.depth))
+    foreach (gf; roots.filter!(existsAnd!isDir)
+            .map!(a => dirEntries(a.toString, SpanMode.depth))
             .joiner
             .filter!isFile
             .filter!(a => a.baseName == ".gitignore")) {
