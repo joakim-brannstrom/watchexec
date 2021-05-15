@@ -13,6 +13,7 @@ import std.conv : text;
 import std.datetime : Duration;
 import std.datetime : dur, Clock;
 import std.exception : collectException;
+import std.file : readLink;
 import std.format : format;
 
 import colorlog;
@@ -20,6 +21,7 @@ import my.filter;
 import my.path;
 import my.fswatch : Monitor, MonitorResult;
 import my.filter : GlobFilter;
+import my.file : existsAnd, isSymlink;
 
 version (unittest) {
 } else {
@@ -236,9 +238,10 @@ int cliOneshot(AppConfig conf, const string[] cmd,
     if (isChanged) {
         import proc;
 
+        const tmpDb = AbsolutePath(conf.global.jsonDb ~ ".tmp");
         auto saveDb = task(() {
             try {
-                File(conf.global.jsonDb, "w").write(toJson(newDb));
+                File(tmpDb, "w").write(toJson(newDb));
             } catch (Exception e) {
                 logger.info(e.msg).collectException;
             }
@@ -249,7 +252,12 @@ int cliOneshot(AppConfig conf, const string[] cmd,
         p.wait;
         exitStatus = p.status;
 
-        saveDb.yieldForce;
+        try {
+            saveDb.yieldForce;
+            rename(tmpDb, conf.global.jsonDb);
+        } catch(Exception e) {
+            logger.warning(e.msg);
+        }
 
         logger.trace("old database: ", db);
         logger.trace("new database: ", newDb);
@@ -312,14 +320,15 @@ struct AppConfig {
         AbsolutePath[] paths;
         Duration debounce;
         Duration timeout;
-        bool useVcsIgnore;
         bool clearEvents;
         bool clearScreen;
+        bool followSymlink;
         bool oneShotMode;
         bool postPone;
         bool restart;
         bool setEnv;
         bool useShell;
+        bool useVcsIgnore;
         bool watchMetadata;
         int signal = SIGKILL;
         string jsonDb = "watchexec_db.json";
@@ -374,13 +383,14 @@ AppConfig parseUserArgs(string[] args) {
             "env", "set WATCHEXEC_EVENT environment variables when executing the command", &conf.global.setEnv,
             "exclude", "ignore modifications to paths matching the pattern (glob: <empty>)", &conf.global.exclude,
             "e|ext", "file extensions, excluding dot, to watch (default: any)", &monitorExtensions,
+            "follow-symlink", "follow the symlink and watch what it is linked to", &conf.global.followSymlink,
             "include", "ignore all modifications except those matching the pattern (glob: *)", &conf.global.include,
             "meta", "watch for metadata changes (date, open/close, permission)", &conf.global.watchMetadata,
             "no-default-ignore", "skip auto-ignoring of commonly ignored globs", &noDefaultIgnore,
             "no-vcs-ignore", "skip auto-loading of .gitignore files for filtering", &noVcsIgnore,
             "notify", format!"use %s for desktop notification with commands exit status and this msg"(notifySendCmd), &conf.global.useNotifySend,
-            "o|oneshot", "run in one-shot mode where the command is executed if files are different from watchexec.json", &conf.global.oneShotMode,
             "oneshot-db", "json database to use", &conf.global.jsonDb,
+            "o|oneshot", "run in one-shot mode where the command is executed if files are different from watchexec.json", &conf.global.oneShotMode,
             "p|postpone", "wait until first change to execute command", &conf.global.postPone,
             "r|restart", "restart the process if it's still running", &conf.global.restart,
             "shell", "(deprecated) run the command in a shell (/bin/sh)", &conf.global.useShell,
@@ -422,7 +432,13 @@ AppConfig parseUserArgs(string[] args) {
 
         conf.global.timeout = timeout.dur!"seconds";
         conf.global.debounce = debounce.dur!"msecs";
-        conf.global.paths = paths.map!(a => AbsolutePath(a)).array;
+        conf.global.paths = () {
+            auto tmp = paths;
+            if (conf.global.followSymlink) {
+                tmp = tmp.map!(a => followLink(Path(a)).toString).array;
+            }
+            return tmp.map!(a => AbsolutePath(a)).array;
+        }();
 
         conf.global.help = conf.global.helpInfo.helpWanted;
     } catch (std.getopt.GetOptException e) {
@@ -433,6 +449,21 @@ AppConfig parseUserArgs(string[] args) {
     }
 
     return conf;
+}
+
+Path followLink(Path p) {
+    import my.set;
+
+    Set!Path visited;
+    visited.add(p);
+
+    while (existsAnd!isSymlink(p)) {
+        p = Path(readLink(p.toString));
+        if (p in visited)
+            return p;
+        visited.add(p);
+    }
+    return p;
 }
 
 /** Returns: the glob patterns from `content`.
