@@ -8,18 +8,21 @@ module watchexec;
 import core.thread : Thread;
 import logger = std.experimental.logger;
 import std.algorithm : filter, map, joiner;
-import std.array : array, empty;
+import std.array : array, empty, appender;
 import std.conv : text;
 import std.datetime : Duration;
 import std.datetime : dur, Clock;
 import std.exception : collectException;
+import std.file : readLink;
 import std.format : format;
 
 import colorlog;
-import my.filter;
-import my.path;
-import my.fswatch : Monitor, MonitorResult;
+import my.file : existsAnd, isSymlink;
 import my.filter : GlobFilter;
+import my.filter;
+import my.fswatch : Monitor, MonitorResult;
+import my.optional;
+import my.path;
 
 version (unittest) {
 } else {
@@ -52,8 +55,9 @@ int cliHelp(AppConfig conf) {
 }
 
 int cli(AppConfig conf) {
+    import std.process : userShell;
     import std.stdio : write, writeln;
-    import my.fswatch : ContentEvents, MetadataEvents;
+    import my.fswatch : ContentEvents, MetadataEvents, FileWatch;
     import proc;
 
     if (conf.global.paths.empty) {
@@ -74,7 +78,7 @@ int cli(AppConfig conf) {
     const cmd = () {
         if (conf.global.useShell)
             logger.info("--shell is deprecated");
-        return ["/bin/sh", "-c", format!"%-(%s %)"(conf.global.command)];
+        return [userShell, "-c", format!"%-(%s %)"(conf.global.command)];
     }();
 
     auto handleExitStatus = HandleExitStatus(conf.global.useNotifySend);
@@ -86,6 +90,7 @@ int cli(AppConfig conf) {
     logger.info("starting");
 
     auto monitor = Monitor(conf.global.paths, defaultFilter, recurseFilter,
+            FileWatch.FollowSymlink(conf.global.followSymlink),
             conf.global.watchMetadata ? (ContentEvents | MetadataEvents) : ContentEvents);
 
     MonitorResult[] buildAndExecute(MonitorResult[] eventFiles) {
@@ -168,13 +173,13 @@ int cli(AppConfig conf) {
 
 int cliOneshot(AppConfig conf, const string[] cmd,
         HandleExitStatus handleExitStatus, GlobFilter defaultFilter) {
-    import std.algorithm : map, filter, joiner;
+    import std.algorithm : map, filter, joiner, cache;
     import std.datetime : Clock;
-    import std.file : exists, readText, isDir, isFile, timeLastModified, getSize;
+    import std.file : exists, readText, isDir, isFile, timeLastModified, getSize, rename;
     import std.parallelism : taskPool, task;
     import std.stdio : File;
     import std.typecons : tuple, Tuple;
-    import my.file : existsAnd;
+    import my.file : existsAnd, followSymlink;
     import my.optional;
     import watchexec_internal.oneshot;
 
@@ -188,6 +193,13 @@ int cliOneshot(AppConfig conf, const string[] cmd,
         else
             newDb.add(f);
         return changed;
+    }
+
+    auto envApp = appender!(string[])();
+    void updateEnv(AbsolutePath p, MonitorResult.Kind kind) {
+        if (!conf.global.setEnv)
+            return;
+        envApp.put(format!"%s:%s"(kind, p.toString));
     }
 
     auto db = () {
@@ -206,27 +218,34 @@ int cliOneshot(AppConfig conf, const string[] cmd,
     bool isChanged;
     FileDb newDb;
 
-    static OneShotFile[] runOneshot(Tuple!(AbsolutePath, GlobFilter) data) {
-        return OneShotRange(data[0], data[1]).filter!(a => a.hasValue)
-            .map!(a => a.orElse(OneShotFile.init))
-            .array;
-    }
-
     try {
-        foreach (f; taskPool.amap!runOneshot(conf.global
+        foreach (f; conf.global
                 .paths
                 .filter!(existsAnd!isDir)
-                .map!(a => tuple(a, defaultFilter))
-                .array).joiner) {
+                .map!(a => OneShotRange(a, defaultFilter, conf.global.followSymlink))
+                .joiner
+                .filter!(a => a.hasValue)
+                .map!(a => a.orElse(OneShotFile.init))) {
             const changed = update(db, newDb, f);
             isChanged = isChanged || changed;
+            if (changed)
+                updateEnv(f.path, MonitorResult.Kind.Modify);
         }
 
-        foreach (fname; conf.global.paths.filter!isFile) {
+        foreach (fname; conf.global.paths.filter!(existsAnd!isFile)) {
             auto f = OneShotFile(AbsolutePath(fname), TimeStamp(timeLastModified(fname.toString,
                     Clock.currTime).toUnixTime), FileSize(getSize(fname)));
             const changed = update(db, newDb, f);
             isChanged = isChanged || changed;
+            if (changed)
+                updateEnv(f.path, MonitorResult.Kind.Modify);
+        }
+
+        // find deleted files
+        foreach (a; db.files.byKey.filter!(a => a !in newDb.files)) {
+            isChanged = true;
+            updateEnv(a, MonitorResult.Kind.Delete);
+            break;
         }
     } catch (Exception e) {
         logger.info(e.msg).collectException;
@@ -236,20 +255,33 @@ int cliOneshot(AppConfig conf, const string[] cmd,
     if (isChanged) {
         import proc;
 
+        const tmpDb = AbsolutePath(conf.global.jsonDb ~ ".tmp");
         auto saveDb = task(() {
             try {
-                File(conf.global.jsonDb, "w").write(toJson(newDb));
+                File(tmpDb, "w").write(toJson(newDb));
             } catch (Exception e) {
                 logger.info(e.msg).collectException;
             }
         });
         saveDb.executeInNewThread;
 
-        auto p = spawnProcess(cmd).sandbox.timeout(conf.global.timeout).rcKill(conf.global.signal);
+        auto env = () {
+            string[string] env;
+            if (conf.global.setEnv)
+                env["WATCHEXEC_EVENT"] = envApp.data.joiner(";").text;
+            return env;
+        }();
+        auto p = spawnProcess(cmd, env).sandbox.timeout(conf.global.timeout)
+            .rcKill(conf.global.signal);
         p.wait;
         exitStatus = p.status;
 
-        saveDb.yieldForce;
+        try {
+            saveDb.yieldForce;
+            rename(tmpDb, conf.global.jsonDb);
+        } catch (Exception e) {
+            logger.warning(e.msg);
+        }
 
         logger.trace("old database: ", db);
         logger.trace("new database: ", newDb);
@@ -312,14 +344,15 @@ struct AppConfig {
         AbsolutePath[] paths;
         Duration debounce;
         Duration timeout;
-        bool useVcsIgnore;
         bool clearEvents;
         bool clearScreen;
+        bool followSymlink;
         bool oneShotMode;
         bool postPone;
         bool restart;
         bool setEnv;
         bool useShell;
+        bool useVcsIgnore;
         bool watchMetadata;
         int signal = SIGKILL;
         string jsonDb = "watchexec_db.json";
@@ -345,7 +378,7 @@ AppConfig parseUserArgs(string[] args) {
     import std.algorithm : countUntil, map;
     import std.path : baseName;
     import std.traits : EnumMembers;
-    import my.file : existsAnd, isFile, whichFromEnv;
+    import my.file : existsAnd, isFile, whichFromEnv, followSymlink;
     static import std.getopt;
 
     AppConfig conf;
@@ -361,6 +394,7 @@ AppConfig parseUserArgs(string[] args) {
         bool clearEvents;
         bool noDefaultIgnore;
         bool noVcsIgnore;
+        bool noFollowSymlink;
         string[] include;
         string[] monitorExtensions;
         string[] paths;
@@ -377,10 +411,11 @@ AppConfig parseUserArgs(string[] args) {
             "include", "ignore all modifications except those matching the pattern (glob: *)", &conf.global.include,
             "meta", "watch for metadata changes (date, open/close, permission)", &conf.global.watchMetadata,
             "no-default-ignore", "skip auto-ignoring of commonly ignored globs", &noDefaultIgnore,
+            "no-follow-symlink", "do not follow symlinks", &noFollowSymlink,
             "no-vcs-ignore", "skip auto-loading of .gitignore files for filtering", &noVcsIgnore,
             "notify", format!"use %s for desktop notification with commands exit status and this msg"(notifySendCmd), &conf.global.useNotifySend,
-            "o|oneshot", "run in one-shot mode where the command is executed if files are different from watchexec.json", &conf.global.oneShotMode,
             "oneshot-db", "json database to use", &conf.global.jsonDb,
+            "o|oneshot", "run in one-shot mode where the command is executed if files are different from watchexec.json", &conf.global.oneShotMode,
             "p|postpone", "wait until first change to execute command", &conf.global.postPone,
             "r|restart", "restart the process if it's still running", &conf.global.restart,
             "shell", "(deprecated) run the command in a shell (/bin/sh)", &conf.global.useShell,
@@ -392,6 +427,7 @@ AppConfig parseUserArgs(string[] args) {
         // dfmt on
 
         conf.global.clearEvents = clearEvents;
+        conf.global.followSymlink = !noFollowSymlink;
 
         include ~= monitorExtensions.map!(a => format!"*.%s"(a)).array;
         if (include.empty) {
@@ -422,7 +458,13 @@ AppConfig parseUserArgs(string[] args) {
 
         conf.global.timeout = timeout.dur!"seconds";
         conf.global.debounce = debounce.dur!"msecs";
-        conf.global.paths = paths.map!(a => AbsolutePath(a)).array;
+        conf.global.paths = () {
+            return (conf.global.followSymlink) ? (paths.map!(a => AbsolutePath(a)).array) : (
+                    paths.map!(a => followSymlink(Path(a)).orElse(Path.init))
+                    .filter!(a => !a.empty)
+                    .map!(a => AbsolutePath(a))
+                    .array);
+        }();
 
         conf.global.help = conf.global.helpInfo.helpWanted;
     } catch (std.getopt.GetOptException e) {
@@ -501,10 +543,11 @@ GlobFilter[AbsolutePath] parseGitIgnoreRecursive(string[] includes, AbsolutePath
     foreach (gf; roots.filter!(existsAnd!isDir)
             .map!(a => dirEntries(a.toString, SpanMode.depth))
             .joiner
-            .filter!isFile
+            .map!(a => Path(a.name))
+            .filter!(existsAnd!isFile)
             .filter!(a => a.baseName == ".gitignore")) {
         try {
-            rval[AbsolutePath(gf.name.dirName)] = GlobFilter(includes, parseGitIgnore(readText(gf)));
+            rval[AbsolutePath(gf.dirName)] = GlobFilter(includes, parseGitIgnore(readText(gf)));
         } catch (Exception e) {
         }
     }

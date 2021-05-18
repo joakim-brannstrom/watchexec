@@ -6,6 +6,7 @@ Author: Joakim Brännström (joakim.brannstrom@gmx.com)
 module watchexec_internal.oneshot;
 
 import logger = std.experimental.logger;
+import std.array : empty;
 import std.conv : to;
 import std.exception : collectException;
 import std.json : JSONValue;
@@ -13,7 +14,7 @@ import std.json : JSONValue;
 import colorlog;
 import my.named_type;
 import my.hash;
-import my.path : AbsolutePath;
+import my.path : AbsolutePath, Path;
 import my.filter : GlobFilter;
 import my.optional;
 
@@ -49,7 +50,7 @@ struct OneShotFile {
     }
 
     Checksum64 checksum() nothrow {
-        if (hasChecksum)
+        if (hasChecksum || size.get == 0)
             return checksum_;
 
         checksum_ = () {
@@ -66,36 +67,76 @@ struct OneShotFile {
 }
 
 struct OneShotRange {
-    import std.file : dirEntries, SpanMode;
+    import std.file : dirEntries, SpanMode, timeLastModified, getSize, isFile;
     import std.traits : ReturnType;
+    import my.file : followSymlink, existsAnd;
 
     private {
         ReturnType!dirEntries entries;
         GlobFilter gf;
+        Optional!OneShotFile front_;
+        bool followSymlink_;
     }
 
-    this(AbsolutePath root, GlobFilter gf) {
-        this.entries = dirEntries(root, SpanMode.depth);
-        this.gf = gf;
-    }
-
-    Optional!OneShotFile front() {
-        assert(!empty, "Can't get front of an empty range");
-        auto f = entries.front;
-        if (f.isFile && gf.match(f.name)) {
-            return OneShotFile(AbsolutePath(f.name),
-                    f.timeLastModified.toUnixTime.TimeStamp, f.size.FileSize).some;
+    this(AbsolutePath root, GlobFilter gf, bool followSymlink) nothrow {
+        try {
+            this.entries = dirEntries(root, SpanMode.depth);
+            this.gf = gf;
+            this.followSymlink_ = followSymlink;
+        } catch (Exception e) {
+            logger.trace(e.msg).collectException;
         }
-        return none!OneShotFile;
     }
 
-    void popFront() @safe {
+    Optional!OneShotFile front() nothrow {
+        assert(!empty, "Can't get front of an empty range");
+
+        if (front_.hasValue)
+            return front_;
+
+        () {
+            try {
+                auto f = () {
+                    if (entries.front.isSymlink && followSymlink_)
+                        return followSymlink(Path(entries.front.name)).orElse(Path.init).toString;
+                    return entries.front.name;
+                }();
+
+                if (f.empty)
+                    return;
+
+                if (Path(f).existsAnd!isFile && gf.match(f)) {
+                    front_ = OneShotFile(AbsolutePath(f),
+                            f.timeLastModified.toUnixTime.TimeStamp, f.getSize.FileSize).some;
+                }
+            } catch (Exception e) {
+                logger.trace(e.msg).collectException;
+                front_ = none!OneShotFile;
+            }
+        }();
+
+        return front_;
+    }
+
+    void popFront() @trusted nothrow {
         assert(!empty, "Can't pop front of an empty range");
-        entries.popFront;
+
+        front_ = none!OneShotFile;
+
+        try {
+            entries.popFront;
+        } catch (Exception e) {
+            logger.trace(e.msg).collectException;
+        }
     }
 
-    bool empty() @safe {
-        return entries.empty;
+    bool empty() @safe nothrow {
+        try {
+            return entries.empty;
+        } catch (Exception e) {
+            logger.trace(e.msg).collectException;
+        }
+        return true;
     }
 }
 
@@ -108,6 +149,8 @@ struct FileDb {
 
     bool isChanged(ref OneShotFile fc) {
         if (auto v = fc.path in files) {
+            if (v.size != fc.size)
+                return true;
             if (v.timeStamp == fc.timeStamp && v.size == fc.size)
                 return false;
             return v.checksum != fc.checksum;
