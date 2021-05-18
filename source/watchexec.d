@@ -55,6 +55,7 @@ int cliHelp(AppConfig conf) {
 }
 
 int cli(AppConfig conf) {
+    import std.process : userShell;
     import std.stdio : write, writeln;
     import my.fswatch : ContentEvents, MetadataEvents, FileWatch;
     import proc;
@@ -77,7 +78,7 @@ int cli(AppConfig conf) {
     const cmd = () {
         if (conf.global.useShell)
             logger.info("--shell is deprecated");
-        return ["/bin/sh", "-c", format!"%-(%s %)"(conf.global.command)];
+        return [userShell, "-c", format!"%-(%s %)"(conf.global.command)];
     }();
 
     auto handleExitStatus = HandleExitStatus(conf.global.useNotifySend);
