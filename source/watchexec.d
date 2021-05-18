@@ -8,7 +8,7 @@ module watchexec;
 import core.thread : Thread;
 import logger = std.experimental.logger;
 import std.algorithm : filter, map, joiner;
-import std.array : array, empty;
+import std.array : array, empty, appender;
 import std.conv : text;
 import std.datetime : Duration;
 import std.datetime : dur, Clock;
@@ -17,11 +17,12 @@ import std.file : readLink;
 import std.format : format;
 
 import colorlog;
-import my.filter;
-import my.path;
-import my.fswatch : Monitor, MonitorResult;
-import my.filter : GlobFilter;
 import my.file : existsAnd, isSymlink;
+import my.filter : GlobFilter;
+import my.filter;
+import my.fswatch : Monitor, MonitorResult;
+import my.optional;
+import my.path;
 
 version (unittest) {
 } else {
@@ -55,7 +56,7 @@ int cliHelp(AppConfig conf) {
 
 int cli(AppConfig conf) {
     import std.stdio : write, writeln;
-    import my.fswatch : ContentEvents, MetadataEvents;
+    import my.fswatch : ContentEvents, MetadataEvents, FileWatch;
     import proc;
 
     if (conf.global.paths.empty) {
@@ -88,6 +89,7 @@ int cli(AppConfig conf) {
     logger.info("starting");
 
     auto monitor = Monitor(conf.global.paths, defaultFilter, recurseFilter,
+            FileWatch.FollowSymlink(conf.global.followSymlink),
             conf.global.watchMetadata ? (ContentEvents | MetadataEvents) : ContentEvents);
 
     MonitorResult[] buildAndExecute(MonitorResult[] eventFiles) {
@@ -170,13 +172,13 @@ int cli(AppConfig conf) {
 
 int cliOneshot(AppConfig conf, const string[] cmd,
         HandleExitStatus handleExitStatus, GlobFilter defaultFilter) {
-    import std.algorithm : map, filter, joiner;
+    import std.algorithm : map, filter, joiner, cache;
     import std.datetime : Clock;
-    import std.file : exists, readText, isDir, isFile, timeLastModified, getSize;
+    import std.file : exists, readText, isDir, isFile, timeLastModified, getSize, rename;
     import std.parallelism : taskPool, task;
     import std.stdio : File;
     import std.typecons : tuple, Tuple;
-    import my.file : existsAnd;
+    import my.file : existsAnd, followSymlink;
     import my.optional;
     import watchexec_internal.oneshot;
 
@@ -190,6 +192,13 @@ int cliOneshot(AppConfig conf, const string[] cmd,
         else
             newDb.add(f);
         return changed;
+    }
+
+    auto envApp = appender!(string[])();
+    void updateEnv(AbsolutePath p, MonitorResult.Kind kind) {
+        if (!conf.global.setEnv)
+            return;
+        envApp.put(format!"%s:%s"(kind, p.toString));
     }
 
     auto db = () {
@@ -208,27 +217,34 @@ int cliOneshot(AppConfig conf, const string[] cmd,
     bool isChanged;
     FileDb newDb;
 
-    static OneShotFile[] runOneshot(Tuple!(AbsolutePath, GlobFilter) data) {
-        return OneShotRange(data[0], data[1]).filter!(a => a.hasValue)
-            .map!(a => a.orElse(OneShotFile.init))
-            .array;
-    }
-
     try {
-        foreach (f; taskPool.amap!runOneshot(conf.global
+        foreach (f; conf.global
                 .paths
                 .filter!(existsAnd!isDir)
-                .map!(a => tuple(a, defaultFilter))
-                .array).joiner) {
+                .map!(a => OneShotRange(a, defaultFilter, conf.global.followSymlink))
+                .joiner
+                .filter!(a => a.hasValue)
+                .map!(a => a.orElse(OneShotFile.init))) {
             const changed = update(db, newDb, f);
             isChanged = isChanged || changed;
+            if (changed)
+                updateEnv(f.path, MonitorResult.Kind.Modify);
         }
 
-        foreach (fname; conf.global.paths.filter!isFile) {
+        foreach (fname; conf.global.paths.filter!(existsAnd!isFile)) {
             auto f = OneShotFile(AbsolutePath(fname), TimeStamp(timeLastModified(fname.toString,
                     Clock.currTime).toUnixTime), FileSize(getSize(fname)));
             const changed = update(db, newDb, f);
             isChanged = isChanged || changed;
+            if (changed)
+                updateEnv(f.path, MonitorResult.Kind.Modify);
+        }
+
+        // find deleted files
+        foreach (a; db.files.byKey.filter!(a => a !in newDb.files)) {
+            isChanged = true;
+            updateEnv(a, MonitorResult.Kind.Delete);
+            break;
         }
     } catch (Exception e) {
         logger.info(e.msg).collectException;
@@ -248,14 +264,21 @@ int cliOneshot(AppConfig conf, const string[] cmd,
         });
         saveDb.executeInNewThread;
 
-        auto p = spawnProcess(cmd).sandbox.timeout(conf.global.timeout).rcKill(conf.global.signal);
+        auto env = () {
+            string[string] env;
+            if (conf.global.setEnv)
+                env["WATCHEXEC_EVENT"] = envApp.data.joiner(";").text;
+            return env;
+        }();
+        auto p = spawnProcess(cmd, env).sandbox.timeout(conf.global.timeout)
+            .rcKill(conf.global.signal);
         p.wait;
         exitStatus = p.status;
 
         try {
             saveDb.yieldForce;
             rename(tmpDb, conf.global.jsonDb);
-        } catch(Exception e) {
+        } catch (Exception e) {
             logger.warning(e.msg);
         }
 
@@ -354,7 +377,7 @@ AppConfig parseUserArgs(string[] args) {
     import std.algorithm : countUntil, map;
     import std.path : baseName;
     import std.traits : EnumMembers;
-    import my.file : existsAnd, isFile, whichFromEnv;
+    import my.file : existsAnd, isFile, whichFromEnv, followSymlink;
     static import std.getopt;
 
     AppConfig conf;
@@ -370,6 +393,7 @@ AppConfig parseUserArgs(string[] args) {
         bool clearEvents;
         bool noDefaultIgnore;
         bool noVcsIgnore;
+        bool noFollowSymlink;
         string[] include;
         string[] monitorExtensions;
         string[] paths;
@@ -383,10 +407,10 @@ AppConfig parseUserArgs(string[] args) {
             "env", "set WATCHEXEC_EVENT environment variables when executing the command", &conf.global.setEnv,
             "exclude", "ignore modifications to paths matching the pattern (glob: <empty>)", &conf.global.exclude,
             "e|ext", "file extensions, excluding dot, to watch (default: any)", &monitorExtensions,
-            "follow-symlink", "follow the symlink and watch what it is linked to", &conf.global.followSymlink,
             "include", "ignore all modifications except those matching the pattern (glob: *)", &conf.global.include,
             "meta", "watch for metadata changes (date, open/close, permission)", &conf.global.watchMetadata,
             "no-default-ignore", "skip auto-ignoring of commonly ignored globs", &noDefaultIgnore,
+            "no-follow-symlink", "do not follow symlinks", &noFollowSymlink,
             "no-vcs-ignore", "skip auto-loading of .gitignore files for filtering", &noVcsIgnore,
             "notify", format!"use %s for desktop notification with commands exit status and this msg"(notifySendCmd), &conf.global.useNotifySend,
             "oneshot-db", "json database to use", &conf.global.jsonDb,
@@ -402,6 +426,7 @@ AppConfig parseUserArgs(string[] args) {
         // dfmt on
 
         conf.global.clearEvents = clearEvents;
+        conf.global.followSymlink = !noFollowSymlink;
 
         include ~= monitorExtensions.map!(a => format!"*.%s"(a)).array;
         if (include.empty) {
@@ -433,11 +458,11 @@ AppConfig parseUserArgs(string[] args) {
         conf.global.timeout = timeout.dur!"seconds";
         conf.global.debounce = debounce.dur!"msecs";
         conf.global.paths = () {
-            auto tmp = paths;
-            if (conf.global.followSymlink) {
-                tmp = tmp.map!(a => followLink(Path(a)).toString).array;
-            }
-            return tmp.map!(a => AbsolutePath(a)).array;
+            return (conf.global.followSymlink) ? (paths.map!(a => AbsolutePath(a)).array) : (
+                    paths.map!(a => followSymlink(Path(a)).orElse(Path.init))
+                    .filter!(a => !a.empty)
+                    .map!(a => AbsolutePath(a))
+                    .array);
         }();
 
         conf.global.help = conf.global.helpInfo.helpWanted;
@@ -449,21 +474,6 @@ AppConfig parseUserArgs(string[] args) {
     }
 
     return conf;
-}
-
-Path followLink(Path p) {
-    import my.set;
-
-    Set!Path visited;
-    visited.add(p);
-
-    while (existsAnd!isSymlink(p)) {
-        p = Path(readLink(p.toString));
-        if (p in visited)
-            return p;
-        visited.add(p);
-    }
-    return p;
 }
 
 /** Returns: the glob patterns from `content`.
@@ -532,10 +542,11 @@ GlobFilter[AbsolutePath] parseGitIgnoreRecursive(string[] includes, AbsolutePath
     foreach (gf; roots.filter!(existsAnd!isDir)
             .map!(a => dirEntries(a.toString, SpanMode.depth))
             .joiner
-            .filter!isFile
+            .map!(a => Path(a.name))
+            .filter!(existsAnd!isFile)
             .filter!(a => a.baseName == ".gitignore")) {
         try {
-            rval[AbsolutePath(gf.name.dirName)] = GlobFilter(includes, parseGitIgnore(readText(gf)));
+            rval[AbsolutePath(gf.dirName)] = GlobFilter(includes, parseGitIgnore(readText(gf)));
         } catch (Exception e) {
         }
     }
