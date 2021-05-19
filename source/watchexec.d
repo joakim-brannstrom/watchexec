@@ -276,12 +276,14 @@ int cliOneshot(AppConfig conf, const string[] cmd,
         p.wait;
         exitStatus = p.status;
 
-        try {
-            saveDb.yieldForce;
-            rename(tmpDb, conf.global.jsonDb);
-        } catch (Exception e) {
-            logger.warning(e.msg);
-        }
+        saveDb.yieldForce;
+
+        if (exitStatus == 0)
+            try {
+                rename(tmpDb, conf.global.jsonDb);
+            } catch (Exception e) {
+                logger.warning(e.msg);
+            }
 
         logger.trace("old database: ", db);
         logger.trace("new database: ", newDb);
