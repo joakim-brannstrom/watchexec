@@ -75,7 +75,7 @@ int cli(AppConfig conf) {
 
     logger.infof("command to execute on change: %-(%s %)", conf.global.command);
 
-    const cmd = () {
+    auto cmd = () {
         if (conf.global.useShell)
             logger.info("--shell is deprecated");
         return [userShell, "-c", format!"%-(%s %)"(conf.global.command)];
@@ -171,8 +171,8 @@ int cli(AppConfig conf) {
     }
 }
 
-int cliOneshot(AppConfig conf, const string[] cmd,
-        HandleExitStatus handleExitStatus, GlobFilter defaultFilter) {
+int cliOneshot(AppConfig conf, string[] cmd, HandleExitStatus handleExitStatus,
+        GlobFilter defaultFilter) {
     import std.algorithm : map, filter, joiner, cache;
     import std.datetime : Clock;
     import std.file : exists, readText, isDir, isFile, timeLastModified, getSize, rename;
@@ -217,6 +217,7 @@ int cliOneshot(AppConfig conf, const string[] cmd,
 
     bool isChanged;
     FileDb newDb;
+    newDb.command = cmd;
 
     try {
         foreach (f; conf.global
@@ -247,6 +248,8 @@ int cliOneshot(AppConfig conf, const string[] cmd,
             updateEnv(a, MonitorResult.Kind.Delete);
             break;
         }
+
+        isChanged = isChanged || db.command != cmd;
     } catch (Exception e) {
         logger.info(e.msg).collectException;
     }

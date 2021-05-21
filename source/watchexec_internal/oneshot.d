@@ -6,7 +6,8 @@ Author: Joakim Brännström (joakim.brannstrom@gmx.com)
 module watchexec_internal.oneshot;
 
 import logger = std.experimental.logger;
-import std.array : empty;
+import std.algorithm : map;
+import std.array : empty, array;
 import std.conv : to;
 import std.exception : collectException;
 import std.json : JSONValue;
@@ -142,6 +143,7 @@ struct OneShotRange {
 
 struct FileDb {
     OneShotFile[AbsolutePath] files;
+    string[] command;
 
     void add(OneShotFile fc) {
         files[fc.path] = fc;
@@ -164,8 +166,17 @@ FileDb fromJson(string txt) nothrow {
 
     FileDb rval;
 
+    auto json = () {
+        try {
+            return parseJSON(txt);
+        } catch (Exception e) {
+            logger.info(e.msg).collectException;
+        }
+        return JSONValue.init;
+    }();
+
     try {
-        foreach (a; parseJSON(txt).array) {
+        foreach (a; json["files"].array) {
             try {
                 rval.add(OneShotFile(AbsolutePath(a["p"].str),
                         a["t"].str.to!long.TimeStamp,
@@ -174,6 +185,11 @@ FileDb fromJson(string txt) nothrow {
                 logger.trace(e.msg).collectException;
             }
         }
+    } catch (Exception e) {
+        logger.info(e.msg).collectException;
+    }
+    try {
+        rval.command = json["cmd"].array.map!(a => a.str).array;
     } catch (Exception e) {
         logger.info(e.msg).collectException;
     }
@@ -194,7 +210,6 @@ JSONValue toJson(ref FileDb db) {
     import std.path : relativePath;
 
     auto app = appender!(JSONValue[])();
-    JSONValue rval;
     foreach (fc; db.files.byValue) {
         try {
             JSONValue v;
@@ -206,6 +221,9 @@ JSONValue toJson(ref FileDb db) {
         } catch (Exception e) {
         }
     }
+    JSONValue rval;
+    rval["files"] = app.data;
+    rval["cmd"] = db.command;
 
-    return JSONValue(app.data);
+    return rval;
 }
