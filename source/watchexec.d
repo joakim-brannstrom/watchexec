@@ -87,6 +87,7 @@ int cli(AppConfig conf) {
         return cliOneshot(conf, cmd, handleExitStatus, defaultFilter);
 
     logger.infof("watching: %s", conf.global.paths);
+    checkPaths(conf.global.paths);
     logger.info("starting");
 
     auto monitor = Monitor(conf.global.paths, defaultFilter, recurseFilter,
@@ -294,6 +295,22 @@ int cliOneshot(AppConfig conf, string[] cmd, HandleExitStatus handleExitStatus,
 
     handleExitStatus.exitStatus(exitStatus);
     return exitStatus;
+}
+
+// Check if the paths exists and if it doesn't print a warning to the user.
+// For now I think a warning is the best case because watchexec do support
+// watching for files that do not yet exist.
+void checkPaths(AbsolutePath[] paths) nothrow {
+    import std.file : exists;
+
+    foreach (p; paths) {
+        try {
+            if (!exists(p.toString))
+                logger.warning("path do not exist: ", p);
+        } catch (Exception e) {
+            logger.warning(e.msg).collectException;
+        }
+    }
 }
 
 struct HandleExitStatus {
