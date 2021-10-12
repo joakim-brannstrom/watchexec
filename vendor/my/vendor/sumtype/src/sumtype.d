@@ -359,7 +359,7 @@ public:
 			tag = tid;
 		}
 
-		static if (isCopyable!T) {
+		static if (isCopyable!(const(T))) {
 			// Avoid defining the same constructor multiple times
 			static if (IndexOf!(const(T), Map!(ConstOf, Types)) == tid) {
 				/// ditto
@@ -376,7 +376,11 @@ public:
 					tag = tid;
 				}
 			}
+		} else {
+			@disable this(const(T) value) const;
+		}
 
+		static if (isCopyable!(immutable(T))) {
 			static if (IndexOf!(immutable(T), Map!(ImmutableOf, Types)) == tid) {
 				/// ditto
 				this(immutable(T) value) immutable
@@ -393,7 +397,6 @@ public:
 				}
 			}
 		} else {
-			@disable this(const(T) value) const;
 			@disable this(immutable(T) value) immutable;
 		}
 	}
@@ -496,26 +499,27 @@ public:
 			/**
 			 * Assigns a value to a `SumType`.
 			 *
-			 * Assigning to a `SumType` is `@system` if any of the
-			 * `SumType`'s members contain pointers or references, since
-			 * those members may be reachable through external references,
-			 * and overwriting them could therefore lead to memory
-			 * corruption.
+			 * Assigning to a `SumType` is `@system` if any of the `SumType`'s
+			 * $(I other) members contain pointers or references, since those
+			 * members may be reachable through external references, and
+			 * overwriting them could therefore lead to memory corruption.
 			 *
 			 * An individual assignment can be `@trusted` if the caller can
-			 * guarantee that there are no outstanding references to $(I any)
-			 * of the `SumType`'s members when the assignment occurs.
+			 * guarantee that, when the assignment occurs, there are no
+			 * outstanding references to any such members.
 			 */
 			ref SumType opAssign(T rhs)
 			{
 				import core.lifetime: forward;
 				import std.traits: hasIndirections, hasNested;
-				import std.meta: Or = templateOr;
+				import std.meta: AliasSeq, Or = templateOr;
 
-				enum mayContainPointers =
-					anySatisfy!(Or!(hasIndirections, hasNested), Types);
+				alias OtherTypes =
+					AliasSeq!(Types[0 .. tid], Types[tid + 1 .. $]);
+				enum unsafeToOverwrite =
+					anySatisfy!(Or!(hasIndirections, hasNested), OtherTypes);
 
-				static if (mayContainPointers) {
+				static if (unsafeToOverwrite) {
 					cast(void) () @system {}();
 				}
 
@@ -1263,6 +1267,26 @@ version (D_BetterC) {} else
 	Outer y = x;
 }
 
+// Types with qualified copy constructors
+@safe unittest {
+	static struct ConstCopy
+	{
+		int n;
+		this(inout int n) inout { this.n = n; }
+		this(ref const typeof(this) other) const { this.n = other.n; }
+	}
+
+	static struct ImmutableCopy
+	{
+		int n;
+		this(inout int n) inout { this.n = n; }
+		this(ref immutable typeof(this) other) immutable { this.n = other.n; }
+	}
+
+	const SumType!ConstCopy x = const(ConstCopy)(1);
+	immutable SumType!ImmutableCopy y = immutable(ImmutableCopy)(1);
+}
+
 // Types with disabled opEquals
 @safe unittest {
 	static struct S
@@ -1363,6 +1387,15 @@ version (D_BetterC) {} else
 	const y = x;
 
 	assert(x.typeIndex == y.typeIndex);
+}
+
+// @safe assignment to the only pointer in a SumType
+@safe unittest {
+	SumType!(string, int) sm = 123;
+
+	assert(__traits(compiles, () @safe {
+		sm = "this should be @safe";
+	}));
 }
 
 /// True if `T` is an instance of the `SumType` template, otherwise false.
@@ -1679,7 +1712,7 @@ private size_t stride(size_t dim, lengths...)()
 
 private template matchImpl(Flag!"exhaustive" exhaustive, handlers...)
 {
-	auto matchImpl(SumTypes...)(auto ref SumTypes args)
+	auto ref matchImpl(SumTypes...)(auto ref SumTypes args)
 		if (allSatisfy!(isSumType, SumTypes) && args.length > 0)
 	{
 		enum typeCount(SumType) = SumType.Types.length;
@@ -2109,6 +2142,15 @@ version (D_Exceptions)
 	);
 
 	assert(value.get!double.isClose(6.28));
+}
+
+// Handlers that return by ref
+@safe unittest {
+	SumType!int x = 123;
+
+	x.match!(ref (ref int n) => n) = 456;
+
+	assert(x.match!((int n) => n == 456));
 }
 
 // Unreachable handlers
