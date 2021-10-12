@@ -6,8 +6,7 @@
 		{
 			"dflags": [
 				"-preview=dip1000",
-				"-preview=dip25",
-				"-preview=in"
+				"-preview=dip25"
 			],
 			"name": "default",
 			"targetType": "library"
@@ -23,7 +22,6 @@
 			"dflags-dmd": [
 				"-preview=dip1000",
 				"-preview=dip25",
-				"-preview=in",
 				"-verrors=context"
 			],
 			"dflags-ldc": [
@@ -35,7 +33,7 @@
 	],
 	"copyright": "Copyright © 2019, Joakim Brännström",
 	"dependencies": {
-		"sumtype": "~>1.1.1"
+		"sumtype": "~>1.1.4"
 	},
 	"description": "A library collection of algorithms and data structures for personal use",
 	"importPaths": [
@@ -48,5 +46,5 @@
 	],
 	"targetPath": "build",
 	"targetType": "library",
-	"version": "0.0.32"
+	"version": "0.0.34"
 }
