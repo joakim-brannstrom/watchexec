@@ -11,6 +11,7 @@ import std.array : empty, array;
 import std.conv : to;
 import std.exception : collectException;
 import std.json : JSONValue;
+import std.range;
 
 import colorlog;
 import my.named_type;
@@ -68,12 +69,12 @@ struct OneShotFile {
 }
 
 struct OneShotRange {
-    import std.file : dirEntries, SpanMode, timeLastModified, getSize, isFile;
+    import std.file : dirEntries, SpanMode, timeLastModified, getSize, isFile, DirEntry;
     import std.traits : ReturnType;
     import my.file : followSymlink, existsAnd;
 
     private {
-        ReturnType!dirEntries entries;
+        DirEntry[] entries;
         GlobFilter gf;
         Optional!OneShotFile front_;
         bool followSymlink_;
@@ -81,7 +82,7 @@ struct OneShotRange {
 
     this(AbsolutePath root, GlobFilter gf, bool followSymlink) nothrow {
         try {
-            this.entries = dirEntries(root, SpanMode.depth);
+            this.entries = dirEntries(root, SpanMode.depth).array;
             this.gf = gf;
             this.followSymlink_ = followSymlink;
         } catch (Exception e) {
@@ -135,7 +136,10 @@ struct OneShotRange {
         try {
             return entries.empty;
         } catch (Exception e) {
-            logger.trace(e.msg).collectException;
+            try {
+                logger.trace(e.msg);
+            } catch (Exception e) {
+            }
         }
         return true;
     }
